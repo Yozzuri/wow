@@ -734,6 +734,7 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                           translation: segment.translation,
                           onWordTap: widget.onWordTap,
                           textAlign: TextAlign.left,
+                          language: widget.document.meta.language,
                           baseStyle: TextStyle(
                             color: theme.colorScheme.primary,
                             fontSize: 23,

@@ -851,6 +851,7 @@ class _ScrollingSubtitlesState extends State<_ScrollingSubtitles> {
                 translation: segment.translation,
                 onWordTap: widget.onWordTap,
                 textAlign: TextAlign.left,
+                language: widget.document.meta.language,
                 baseStyle: TextStyle(
                   color: theme.colorScheme.onPrimaryContainer,
                   fontSize: 17,

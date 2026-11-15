@@ -1,3 +1,5 @@
+import 'package:japanese_word_tokenizer/japanese_word_tokenizer.dart' as jp;
+
 const String _wordRanges =
     'A-Za-z\\u00C0-\\u024F\\u0370-\\u04FF\\u1E00-\\u1EFF';
 const String _characterRanges =
@@ -20,12 +22,18 @@ final RegExp _wordPattern = RegExp(
   "|\\d+(?:[.,]\\d+)*)\$",
 );
 
+final RegExp _contentPattern = RegExp(
+  "[$_wordRanges$_characterRanges$_hangulRanges]",
+);
+
 bool isWordToken(String token) {
   if (token.trim().isEmpty) {
     return false;
   }
   return _wordPattern.hasMatch(token);
 }
+
+bool hasWordContent(String token) => _contentPattern.hasMatch(token);
 
 List<String> tokenizeLine(String text) {
   if (text.isEmpty) {
@@ -35,4 +43,56 @@ List<String> tokenizeLine(String text) {
       .allMatches(text)
       .map((match) => match.group(0)!)
       .toList(growable: false);
+}
+
+class TextChunk {
+  const TextChunk(this.text, this.word);
+
+  final String text;
+  final String? word;
+}
+
+/// Splits [text] into display chunks. Japanese uses dictionary-free
+/// wakachigaki word segmentation so a tap selects a whole word instead of a
+/// single character. Space-delimited languages keep the punctuation attached
+/// to the preceding word for a natural reading flow.
+List<TextChunk> textChunks(String text, {String language = 'en'}) {
+  if (text.isEmpty) {
+    return const [];
+  }
+  if (language == 'ja') {
+    final chunks = <TextChunk>[];
+    for (final raw in jp.tokenize(text)) {
+      final token = raw;
+      if (token.trim().isEmpty) {
+        continue;
+      }
+      chunks.add(
+        hasWordContent(token)
+            ? TextChunk(token, token.trim())
+            : TextChunk(token, null),
+      );
+    }
+    return chunks;
+  }
+  final tokens = tokenizeLine(text);
+  final chunks = <TextChunk>[];
+  var i = 0;
+  while (i < tokens.length) {
+    final token = tokens[i];
+    if (isWordToken(token)) {
+      var chunk = token;
+      var j = i + 1;
+      while (j < tokens.length && !isWordToken(tokens[j])) {
+        chunk += tokens[j];
+        j++;
+      }
+      chunks.add(TextChunk(chunk, token));
+      i = j;
+    } else {
+      chunks.add(TextChunk(token, null));
+      i++;
+    }
+  }
+  return chunks;
 }

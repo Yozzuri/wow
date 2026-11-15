@@ -12,6 +12,7 @@ class InteractiveLine extends StatelessWidget {
     this.wordStyle,
     this.translationStyle,
     this.textAlign = TextAlign.center,
+    this.language = 'en',
   });
 
   final String text;
@@ -21,6 +22,7 @@ class InteractiveLine extends StatelessWidget {
   final TextStyle? wordStyle;
   final TextStyle? translationStyle;
   final TextAlign textAlign;
+  final String language;
 
   static const TextStyle defaultBaseStyle = TextStyle(
     color: Colors.white,
@@ -28,29 +30,6 @@ class InteractiveLine extends StatelessWidget {
     height: 1.35,
     shadows: [Shadow(blurRadius: 4, color: Colors.black)],
   );
-
-  List<({String text, String? word})> _chunks() {
-    final tokens = tokenizeLine(text);
-    final chunks = <({String text, String? word})>[];
-    var i = 0;
-    while (i < tokens.length) {
-      final token = tokens[i];
-      if (isWordToken(token)) {
-        var chunk = token;
-        var j = i + 1;
-        while (j < tokens.length && !isWordToken(tokens[j])) {
-          chunk += tokens[j];
-          j++;
-        }
-        chunks.add((text: chunk, word: token));
-        i = j;
-      } else {
-        chunks.add((text: token, word: null));
-        i++;
-      }
-    }
-    return chunks;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,7 +56,7 @@ class InteractiveLine extends StatelessWidget {
           alignment: alignment,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            for (final chunk in _chunks())
+            for (final chunk in textChunks(text, language: language))
               if (chunk.word == null)
                 Text(chunk.text, style: base)
               else

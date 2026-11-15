@@ -25,7 +25,7 @@ class SubtitleAnalyzer {
   Future<List<ContentSegment>> analyze({
     required AiConfig config,
     required ContentDocument document,
-    int batchSize = 20,
+    int batchSize = 10,
     void Function(double progress)? onProgress,
   }) async {
     final client = AiClient(config);
@@ -34,12 +34,11 @@ class SubtitleAnalyzer {
     for (var start = 0; start < total; start += batchSize) {
       final end = min(start + batchSize, total);
       final batch = document.segments.sublist(start, end);
-      final raw = await _requestWithRetry(
+      final analyzed = await _analyzeBatch(
         client: client,
         batch: batch,
         language: document.meta.language,
       );
-      final analyzed = parseAnalysisResponse(raw);
       for (final segment in batch) {
         final result = analyzed[segment.index];
         enriched.add(
@@ -64,6 +63,37 @@ class SubtitleAnalyzer {
     return enriched;
   }
 
+  Future<Map<int, AnalyzedSegment>> _analyzeBatch({
+    required AiClient client,
+    required List<ContentSegment> batch,
+    required String language,
+  }) async {
+    try {
+      final raw = await _requestWithRetry(
+        client: client,
+        batch: batch,
+        language: language,
+      );
+      return parseAnalysisResponse(raw);
+    } on FormatException {
+      if (batch.length <= 1) {
+        rethrow;
+      }
+      final middle = batch.length ~/ 2;
+      final left = await _analyzeBatch(
+        client: client,
+        batch: batch.sublist(0, middle),
+        language: language,
+      );
+      final right = await _analyzeBatch(
+        client: client,
+        batch: batch.sublist(middle),
+        language: language,
+      );
+      return {...left, ...right};
+    }
+  }
+
   Future<String> _requestWithRetry({
     required AiClient client,
     required List<ContentSegment> batch,
@@ -72,7 +102,7 @@ class SubtitleAnalyzer {
     for (var attempt = 0; attempt < 2; attempt++) {
       final raw = await client.chat(
         messages: _messages(batch, language),
-        maxTokens: 2400,
+        maxTokens: 3200,
       );
       try {
         parseAnalysisResponse(raw);
@@ -111,7 +141,9 @@ class SubtitleAnalyzer {
             '"phrases":[{"text":"multi-word phrase from the text","meaning":"short Chinese meaning","usage":"short usage note"}]}]}. '
             'Keep every input index exactly once. Include at most 8 useful content tokens, '
             '0-2 grammar notes and 0-4 useful phrases per segment. Phrases must appear '
-            'in the original text. Source language: $language. Do not add commentary.',
+            'in the original text. For Japanese, Chinese or Thai, segment tokens into '
+            'natural words instead of single characters. Source language: $language. '
+            'Do not add commentary.',
       },
       {'role': 'user', 'content': jsonEncode(payload)},
     ];
@@ -134,13 +166,27 @@ Map<int, AnalyzedSegment> parseAnalysisResponse(String raw) {
   if (start < 0 || end <= start) {
     throw const FormatException('AI 返回内容中没有 JSON');
   }
-  final decoded = jsonDecode(text.substring(start, end + 1));
-  if (decoded is! Map) {
-    throw const FormatException('AI JSON 顶层不是对象');
+  var jsonText = text.substring(start, end + 1);
+  dynamic decoded;
+  try {
+    decoded = jsonDecode(jsonText);
+  } on FormatException {
+    jsonText = jsonText
+        .replaceAll(RegExp(r',\s*([}\]])'), r'$1')
+        .replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F]'), '');
+    decoded = jsonDecode(jsonText);
   }
-  final segments = decoded['segments'];
-  if (segments is! List) {
-    throw const FormatException('AI JSON 缺少 segments 数组');
+  final List segments;
+  if (decoded is List) {
+    segments = decoded;
+  } else if (decoded is Map) {
+    final rawSegments = decoded['segments'];
+    if (rawSegments is! List) {
+      throw const FormatException('AI JSON 缺少 segments 数组');
+    }
+    segments = rawSegments;
+  } else {
+    throw const FormatException('AI JSON 顶层不是对象');
   }
   final result = <int, AnalyzedSegment>{};
   for (final item in segments) {

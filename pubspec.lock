@@ -272,6 +272,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.3.0"
+  japanese_word_tokenizer:
+    dependency: "direct main"
+    description:
+      name: japanese_word_tokenizer
+      sha256: "8f5361d144387f0d07e963d4fe8924fa26f27f822e791f31d3c2435083bd6411"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.3"
   jni:
     dependency: transitive
     description:

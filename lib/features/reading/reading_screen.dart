@@ -240,14 +240,23 @@ class _ReadingScreenState extends ConsumerState<ReadingScreen> {
       if (mounted) {
         setState(() => _progress = 'AI 分词预处理 ${index + 1}/${chunks.length}…');
       }
-      final processed = await client.segmentText(
-        text: chunks[index],
-        language: readingLanguageFor(language).label,
-      );
-      output.write(processed);
+      try {
+        final processed = await client.segmentText(
+          text: chunks[index],
+          language: readingLanguageFor(language).label,
+        );
+        final cleaned = processed.trim();
+        output.write(cleaned.isEmpty ? chunks[index] : cleaned);
+      } catch (_) {
+        output.write(chunks[index]);
+      }
       output.write('\n');
     }
-    return output.toString().trim();
+    final result = output.toString().trim();
+    if (result.isEmpty || result.length < content.length * 0.3) {
+      return content;
+    }
+    return result;
   }
 
   Future<void> _deleteBook(ReadingBook book) async {

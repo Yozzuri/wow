@@ -106,6 +106,7 @@ class _ReaderPageState extends State<ReaderPage> {
           text: paragraph,
           onWordTap: _lookupWord,
           textAlign: TextAlign.left,
+          language: _language,
           baseStyle: theme.textTheme.bodyLarge?.copyWith(height: 1.7),
           wordStyle: theme.textTheme.bodyLarge?.copyWith(
             height: 1.7,
