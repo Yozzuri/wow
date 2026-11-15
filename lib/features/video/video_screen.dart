@@ -2,16 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
-import '../../core/ai/ai_client.dart';
-import '../../core/ai/ai_settings.dart';
 import '../../core/models/content_document.dart';
 import '../../core/subtitle/subtitle_parser.dart';
-import '../../core/text/tokenizer.dart';
+import '../common/interactive_line.dart';
+import '../common/word_explanation_sheet.dart';
 
 class VideoScreen extends ConsumerStatefulWidget {
   const VideoScreen({super.key});
@@ -140,15 +138,11 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   }
 
   void _showWord(String word, String sentence) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => WordExplanationSheet(
-        word: word,
-        sentence: sentence,
-        language: _document?.meta.language ?? 'en',
-      ),
+    showWordExplanation(
+      context,
+      word: word,
+      sentence: sentence,
+      language: _document?.meta.language ?? 'en',
     );
   }
 
@@ -200,9 +194,29 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                               }
                               return Align(
                                 alignment: Alignment.bottomCenter,
-                                child: _SubtitleOverlay(
-                                  segment: segment,
-                                  onWordTap: _showWord,
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    10,
+                                    16,
+                                    14,
+                                  ),
+                                  decoration: const BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Color(0xCC000000),
+                                      ],
+                                    ),
+                                  ),
+                                  child: InteractiveLine(
+                                    text: segment.text,
+                                    translation: segment.translation,
+                                    onWordTap: _showWord,
+                                  ),
                                 ),
                               );
                             },
@@ -319,216 +333,6 @@ class _EmptyState extends StatelessWidget {
               icon: const Icon(Icons.video_file_outlined),
               label: const Text('选择视频'),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SubtitleOverlay extends StatefulWidget {
-  const _SubtitleOverlay({required this.segment, required this.onWordTap});
-
-  final ContentSegment segment;
-  final void Function(String word, String sentence) onWordTap;
-
-  @override
-  State<_SubtitleOverlay> createState() => _SubtitleOverlayState();
-}
-
-class _SubtitleOverlayState extends State<_SubtitleOverlay> {
-  final List<TapGestureRecognizer> _recognizers = [];
-  String? _cachedText;
-  List<InlineSpan> _spans = const [];
-
-  @override
-  void dispose() {
-    _disposeRecognizers();
-    super.dispose();
-  }
-
-  void _disposeRecognizers() {
-    for (final recognizer in _recognizers) {
-      recognizer.dispose();
-    }
-    _recognizers.clear();
-  }
-
-  void _ensureSpans(TextStyle baseStyle, TextStyle wordStyle) {
-    final text = widget.segment.text;
-    if (_cachedText == text) {
-      return;
-    }
-    _cachedText = text;
-    _disposeRecognizers();
-    final spans = <InlineSpan>[];
-    for (final token in tokenizeLine(text)) {
-      if (isWordToken(token)) {
-        final recognizer = TapGestureRecognizer()
-          ..onTap = () => widget.onWordTap(token, text);
-        _recognizers.add(recognizer);
-        spans.add(TextSpan(text: token, style: wordStyle, recognizer: recognizer));
-      } else {
-        spans.add(TextSpan(text: token, style: baseStyle));
-      }
-    }
-    _spans = spans;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final baseStyle = const TextStyle(
-      color: Colors.white,
-      fontSize: 18,
-      height: 1.35,
-      shadows: [Shadow(blurRadius: 4, color: Colors.black)],
-    );
-    final wordStyle = baseStyle.copyWith(
-      fontWeight: FontWeight.w600,
-      decoration: TextDecoration.underline,
-      decorationColor: const Color(0xFFFFD166),
-      decorationStyle: TextDecorationStyle.dotted,
-    );
-    _ensureSpans(baseStyle, wordStyle);
-    final translation = widget.segment.translation;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.transparent, Color(0xCC000000)],
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          RichText(
-            textAlign: TextAlign.center,
-            text: TextSpan(children: _spans),
-          ),
-          if (translation != null && translation.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              translation,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFE6E6E6),
-                fontSize: 14,
-                height: 1.3,
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class WordExplanationSheet extends ConsumerStatefulWidget {
-  const WordExplanationSheet({
-    super.key,
-    required this.word,
-    required this.sentence,
-    required this.language,
-  });
-
-  final String word;
-  final String sentence;
-  final String language;
-
-  @override
-  ConsumerState<WordExplanationSheet> createState() =>
-      _WordExplanationSheetState();
-}
-
-class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
-  String? _result;
-  String? _error;
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _explain();
-  }
-
-  Future<void> _explain() async {
-    try {
-      final config = await ref.read(aiConfigProvider.future);
-      if (!config.isConfigured) {
-        if (mounted) {
-          setState(() {
-            _error = '尚未配置 AI 接口，请到「设置」页填写 Base URL、模型和 API Key。';
-            _loading = false;
-          });
-        }
-        return;
-      }
-      final result = await AiClient(config).explainWord(
-        word: widget.word,
-        sentence: widget.sentence,
-        language: widget.language,
-      );
-      if (mounted) {
-        setState(() {
-          _result = result;
-          _loading = false;
-        });
-      }
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _error = '$error';
-          _loading = false;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.word, style: theme.textTheme.headlineSmall),
-            const SizedBox(height: 4),
-            Text(
-              widget.sentence,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (_loading)
-              const Row(
-                children: [
-                  SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  SizedBox(width: 12),
-                  Text('AI 解析中…'),
-                ],
-              )
-            else if (_error != null)
-              Text(
-                _error!,
-                style: TextStyle(color: theme.colorScheme.error),
-              )
-            else
-              SelectableText(_result ?? '', style: theme.textTheme.bodyMedium),
           ],
         ),
       ),
