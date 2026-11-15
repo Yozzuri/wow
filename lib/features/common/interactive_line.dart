@@ -1,9 +1,8 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/text/tokenizer.dart';
 
-class InteractiveLine extends StatefulWidget {
+class InteractiveLine extends StatelessWidget {
   const InteractiveLine({
     super.key,
     required this.text,
@@ -23,15 +22,6 @@ class InteractiveLine extends StatefulWidget {
   final TextStyle? translationStyle;
   final TextAlign textAlign;
 
-  @override
-  State<InteractiveLine> createState() => _InteractiveLineState();
-}
-
-class _InteractiveLineState extends State<InteractiveLine> {
-  final List<TapGestureRecognizer> _recognizers = [];
-  String? _cachedText;
-  List<InlineSpan> _spans = const [];
-
   static const TextStyle defaultBaseStyle = TextStyle(
     color: Colors.white,
     fontSize: 18,
@@ -39,70 +29,71 @@ class _InteractiveLineState extends State<InteractiveLine> {
     shadows: [Shadow(blurRadius: 4, color: Colors.black)],
   );
 
-  @override
-  void dispose() {
-    _disposeRecognizers();
-    super.dispose();
-  }
-
-  void _disposeRecognizers() {
-    for (final recognizer in _recognizers) {
-      recognizer.dispose();
-    }
-    _recognizers.clear();
-  }
-
-  void _ensureSpans(TextStyle baseStyle, TextStyle wordStyle) {
-    if (_cachedText == widget.text) {
-      return;
-    }
-    _cachedText = widget.text;
-    _disposeRecognizers();
-    final spans = <InlineSpan>[];
-    for (final token in tokenizeLine(widget.text)) {
+  List<({String text, String? word})> _chunks() {
+    final tokens = tokenizeLine(text);
+    final chunks = <({String text, String? word})>[];
+    var i = 0;
+    while (i < tokens.length) {
+      final token = tokens[i];
       if (isWordToken(token)) {
-        final recognizer = TapGestureRecognizer()
-          ..onTap = () => widget.onWordTap(token, widget.text);
-        _recognizers.add(recognizer);
-        spans.add(
-          TextSpan(text: token, style: wordStyle, recognizer: recognizer),
-        );
+        var chunk = token;
+        var j = i + 1;
+        while (j < tokens.length && !isWordToken(tokens[j])) {
+          chunk += tokens[j];
+          j++;
+        }
+        chunks.add((text: chunk, word: token));
+        i = j;
       } else {
-        spans.add(TextSpan(text: token, style: baseStyle));
+        chunks.add((text: token, word: null));
+        i++;
       }
     }
-    _spans = spans;
+    return chunks;
   }
 
   @override
   Widget build(BuildContext context) {
-    final baseStyle = widget.baseStyle ?? defaultBaseStyle;
-    final wordStyle =
-        widget.wordStyle ??
-        baseStyle.copyWith(
-          fontWeight: FontWeight.w600,
-          decoration: TextDecoration.underline,
-          decorationColor: const Color(0xFFFFD166),
-          decorationStyle: TextDecorationStyle.dotted,
-        );
-    _ensureSpans(baseStyle, wordStyle);
-    final translation = widget.translation;
-    final translationStyle =
-        widget.translationStyle ??
+    final base = baseStyle ?? defaultBaseStyle;
+    final word = wordStyle ?? base.copyWith(
+      fontWeight: FontWeight.w600,
+      decoration: TextDecoration.underline,
+      decorationColor: const Color(0xFFFFD166),
+      decorationStyle: TextDecorationStyle.dotted,
+    );
+    final translationTextStyle = translationStyle ??
         const TextStyle(color: Color(0xFFE6E6E6), fontSize: 14, height: 1.3);
+    final alignment = switch (textAlign) {
+      TextAlign.left || TextAlign.start => WrapAlignment.start,
+      TextAlign.right || TextAlign.end => WrapAlignment.end,
+      _ => WrapAlignment.center,
+    };
+
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        RichText(
-          textAlign: widget.textAlign,
-          text: TextSpan(children: _spans),
+        Wrap(
+          alignment: alignment,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            for (final chunk in _chunks())
+              if (chunk.word == null)
+                Text(chunk.text, style: base)
+              else
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => onWordTap(chunk.word!, text),
+                  child: Text(chunk.text, style: word),
+                ),
+          ],
         ),
-        if (translation != null && translation.isNotEmpty) ...[
+        if (translation != null && translation!.isNotEmpty) ...[
           const SizedBox(height: 6),
           Text(
-            translation,
-            textAlign: widget.textAlign,
-            style: translationStyle,
+            translation!,
+            textAlign: textAlign,
+            style: translationTextStyle,
           ),
         ],
       ],

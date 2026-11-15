@@ -126,6 +126,20 @@ class ContentSegment {
             .toList() ??
         const [],
   );
+
+  ContentSegment copyWith({
+    String? translation,
+    List<ContentToken>? tokens,
+    List<GrammarNote>? grammar,
+  }) => ContentSegment(
+    index: index,
+    startMs: startMs,
+    endMs: endMs,
+    text: text,
+    translation: translation ?? this.translation,
+    tokens: tokens ?? this.tokens,
+    grammar: grammar ?? this.grammar,
+  );
 }
 
 class ContentDocument {

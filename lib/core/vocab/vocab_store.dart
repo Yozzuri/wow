@@ -1,0 +1,283 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../models/content_document.dart';
+import '../text/normalize.dart';
+
+enum ReviewGrade { forgot, hard, good, easy }
+
+class VocabEntry {
+  const VocabEntry({
+    required this.key,
+    required this.word,
+    required this.lemma,
+    required this.meaning,
+    required this.sentence,
+    required this.sourceTitle,
+    required this.createdAt,
+    required this.dueAt,
+    this.pos,
+    this.translation,
+    this.language = 'en',
+    this.intervalDays = 0,
+    this.ease = 2.5,
+    this.reps = 0,
+    this.lapses = 0,
+  });
+
+  final String key;
+  final String word;
+  final String lemma;
+  final String? pos;
+  final String meaning;
+  final String sentence;
+  final String? translation;
+  final String sourceTitle;
+  final String language;
+  final DateTime createdAt;
+  final DateTime dueAt;
+  final int intervalDays;
+  final double ease;
+  final int reps;
+  final int lapses;
+
+  bool get isDue => !dueAt.isAfter(DateTime.now());
+
+  Map<String, dynamic> toJson() => {
+    'key': key,
+    'word': word,
+    'lemma': lemma,
+    'pos': pos,
+    'meaning': meaning,
+    'sentence': sentence,
+    'translation': translation,
+    'sourceTitle': sourceTitle,
+    'language': language,
+    'createdAt': createdAt.toIso8601String(),
+    'dueAt': dueAt.toIso8601String(),
+    'intervalDays': intervalDays,
+    'ease': ease,
+    'reps': reps,
+    'lapses': lapses,
+  };
+
+  factory VocabEntry.fromJson(Map<String, dynamic> json) => VocabEntry(
+    key: json['key'] as String? ?? '',
+    word: json['word'] as String? ?? '',
+    lemma: json['lemma'] as String? ?? '',
+    pos: json['pos'] as String?,
+    meaning: json['meaning'] as String? ?? '',
+    sentence: json['sentence'] as String? ?? '',
+    translation: json['translation'] as String?,
+    sourceTitle: json['sourceTitle'] as String? ?? '',
+    language: json['language'] as String? ?? 'en',
+    createdAt:
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ??
+        DateTime.now(),
+    dueAt: DateTime.tryParse(json['dueAt'] as String? ?? '') ?? DateTime.now(),
+    intervalDays: json['intervalDays'] as int? ?? 0,
+    ease: (json['ease'] as num?)?.toDouble() ?? 2.5,
+    reps: json['reps'] as int? ?? 0,
+    lapses: json['lapses'] as int? ?? 0,
+  );
+
+  VocabEntry copyWith({
+    DateTime? dueAt,
+    int? intervalDays,
+    double? ease,
+    int? reps,
+    int? lapses,
+  }) => VocabEntry(
+    key: key,
+    word: word,
+    lemma: lemma,
+    meaning: meaning,
+    sentence: sentence,
+    sourceTitle: sourceTitle,
+    createdAt: createdAt,
+    dueAt: dueAt ?? this.dueAt,
+    pos: pos,
+    translation: translation,
+    language: language,
+    intervalDays: intervalDays ?? this.intervalDays,
+    ease: ease ?? this.ease,
+    reps: reps ?? this.reps,
+    lapses: lapses ?? this.lapses,
+  );
+}
+
+class VocabStore {
+  const VocabStore();
+
+  Future<File> _file() async {
+    final base = await getApplicationDocumentsDirectory();
+    final dir = Directory('${base.path}/vocab');
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    return File('${dir.path}/entries.json');
+  }
+
+  Future<List<VocabEntry>> load() async {
+    final file = await _file();
+    if (!await file.exists()) {
+      return [];
+    }
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! List) {
+        return [];
+      }
+      return decoded
+          .whereType<Map>()
+          .map((e) => VocabEntry.fromJson(e.cast<String, dynamic>()))
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> _save(List<VocabEntry> entries) async {
+    final file = await _file();
+    await file.writeAsString(
+      jsonEncode(entries.map((e) => e.toJson()).toList()),
+    );
+  }
+
+  String _keyFor(String lemma, String language) =>
+      sha1.convert(utf8.encode('${normalizeForMatch(lemma)}|$language')).toString();
+
+  Future<bool> addToken({
+    required String word,
+    String? lemma,
+    String? pos,
+    String? meaning,
+    required String sentence,
+    String? translation,
+    required String sourceTitle,
+    String language = 'en',
+  }) async {
+    final resolvedLemma = (lemma ?? word).trim();
+    if (resolvedLemma.isEmpty) {
+      return false;
+    }
+    final entries = await load();
+    final key = _keyFor(resolvedLemma, language);
+    if (entries.any((entry) => entry.key == key)) {
+      return false;
+    }
+    final now = DateTime.now();
+    entries.add(
+      VocabEntry(
+        key: key,
+        word: word,
+        lemma: resolvedLemma,
+        pos: pos,
+        meaning: meaning ?? '',
+        sentence: sentence,
+        translation: translation,
+        sourceTitle: sourceTitle,
+        language: language,
+        createdAt: now,
+        dueAt: now,
+      ),
+    );
+    await _save(entries);
+    return true;
+  }
+
+  Future<int> addFromDocument(ContentDocument document) async {
+    final entries = await load();
+    final existing = entries.map((entry) => entry.key).toSet();
+    final now = DateTime.now();
+    var added = 0;
+    for (final segment in document.segments) {
+      for (final token in segment.tokens) {
+        final lemma = (token.lemma ?? token.surface).trim();
+        if (lemma.isEmpty) {
+          continue;
+        }
+        final key = _keyFor(lemma, document.meta.language);
+        if (existing.contains(key)) {
+          continue;
+        }
+        existing.add(key);
+        entries.add(
+          VocabEntry(
+            key: key,
+            word: token.surface,
+            lemma: lemma,
+            pos: token.pos,
+            meaning: token.meaning ?? '',
+            sentence: segment.text,
+            translation: segment.translation,
+            sourceTitle: document.meta.title,
+            language: document.meta.language,
+            createdAt: now,
+            dueAt: now,
+          ),
+        );
+        added++;
+      }
+    }
+    if (added > 0) {
+      await _save(entries);
+    }
+    return added;
+  }
+
+  Future<List<VocabEntry>> review(
+    VocabEntry entry,
+    ReviewGrade grade,
+  ) async {
+    final entries = await load();
+    final index = entries.indexWhere((item) => item.key == entry.key);
+    if (index < 0) {
+      return entries;
+    }
+    var ease = entry.ease;
+    var interval = entry.intervalDays;
+    var reps = entry.reps;
+    var lapses = entry.lapses;
+    if (grade == ReviewGrade.forgot) {
+      reps = 0;
+      interval = 1;
+      lapses += 1;
+      ease = (ease - 0.2).clamp(1.3, 2.8).toDouble();
+    } else {
+      final quality = switch (grade) {
+        ReviewGrade.hard => 3,
+        ReviewGrade.good => 4,
+        _ => 5,
+      };
+      if (reps == 0) {
+        interval = 1;
+      } else if (reps == 1) {
+        interval = 6;
+      } else {
+        interval = (interval * ease).round().clamp(1, 3650);
+      }
+      ease = (ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)))
+          .clamp(1.3, 2.8)
+          .toDouble();
+      reps += 1;
+    }
+    final updated = entry.copyWith(
+      ease: ease,
+      intervalDays: interval,
+      reps: reps,
+      lapses: lapses,
+      dueAt: DateTime.now().add(Duration(days: interval)),
+    );
+    entries[index] = updated;
+    await _save(entries);
+    return entries;
+  }
+}
+
+final vocabStoreProvider = Provider<VocabStore>((ref) => const VocabStore());
+final vocabVersionProvider = StateProvider<int>((ref) => 0);

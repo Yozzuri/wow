@@ -6,8 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/ai/ai_settings.dart';
+import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/models/content_document.dart';
+import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
+import '../../core/vocab/vocab_store.dart';
 import '../common/interactive_line.dart';
 import '../common/word_explanation_sheet.dart';
 
@@ -24,6 +28,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   String? _videoName;
   String? _subtitleName;
   bool _busy = false;
+  bool _analyzing = false;
 
   @override
   void dispose() {
@@ -105,7 +110,13 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         _document = document;
         _subtitleName = '${file.name} · ${parsed.format.toUpperCase()}';
       });
-      _showMessage('已载入 ${parsed.segments.length} 条字幕');
+      final cached = await const ContentStore().loadAnalysis(document);
+      if (cached != null && mounted) {
+        setState(() => _document = cached);
+        _showMessage('已载入 ${cached.segments.length} 条字幕（含 AI 解析缓存）');
+      } else {
+        _showMessage('已载入 ${parsed.segments.length} 条字幕');
+      }
     } catch (error) {
       _showMessage('字幕解析失败：$error');
     } finally {
@@ -138,12 +149,113 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   }
 
   void _showWord(String word, String sentence) {
+    final document = _document;
+    ContentToken? token;
+    if (document != null) {
+      for (final segment in document.segments) {
+        if (segment.text != sentence) {
+          continue;
+        }
+        for (final candidate in segment.tokens) {
+          if (candidate.surface.toLowerCase() == word.toLowerCase()) {
+            token = candidate;
+            break;
+          }
+        }
+        break;
+      }
+    }
     showWordExplanation(
       context,
       word: word,
       sentence: sentence,
-      language: _document?.meta.language ?? 'en',
+      language: document?.meta.language ?? 'en',
+      token: token,
+      sourceTitle: document?.meta.title,
     );
+  }
+
+  Future<void> _analyzeSubtitle() async {
+    final document = _document;
+    if (document == null || _analyzing) {
+      return;
+    }
+    final config = await ref.read(aiConfigProvider.future);
+    if (!config.isConfigured) {
+      _showMessage('请先在「设置」页配置 AI 接口');
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    final progress = ValueNotifier<double>(0);
+    var dialogShown = false;
+    setState(() => _analyzing = true);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('AI 解析字幕'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('正在生成翻译、词汇与语法注释…'),
+            const SizedBox(height: 12),
+            ValueListenableBuilder<double>(
+              valueListenable: progress,
+              builder: (context, value, _) =>
+                  LinearProgressIndicator(value: value == 0 ? null : value),
+            ),
+          ],
+        ),
+      ),
+    );
+    dialogShown = true;
+    try {
+      final segments = await const SubtitleAnalyzer().analyze(
+        config: config,
+        document: document,
+        onProgress: (value) => progress.value = value,
+      );
+      final enriched = document.copyWith(segments: segments);
+      await const ContentStore().saveAnalysis(enriched);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _document = enriched);
+      if (dialogShown) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogShown = false;
+      }
+      _showMessage('解析完成，已保存 JSON 缓存');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      if (dialogShown) {
+        Navigator.of(context, rootNavigator: true).pop();
+        dialogShown = false;
+      }
+      _showMessage('解析失败：$error');
+    } finally {
+      progress.dispose();
+      if (mounted) {
+        setState(() => _analyzing = false);
+      }
+    }
+  }
+
+  Future<void> _extractVocab() async {
+    final document = _document;
+    if (document == null) {
+      return;
+    }
+    final added = await ref.read(vocabStoreProvider).addFromDocument(document);
+    if (added > 0) {
+      ref.read(vocabVersionProvider.notifier).state++;
+    }
+    _showMessage(added > 0 ? '已添加 $added 个生词' : '没有新的生词可添加');
   }
 
   @override
@@ -163,6 +275,35 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
             tooltip: '选择视频',
             onPressed: _busy ? null : _pickVideo,
             icon: const Icon(Icons.video_file_outlined),
+          ),
+          PopupMenuButton<String>(
+            tooltip: '更多',
+            enabled: _document != null && !_analyzing,
+            onSelected: (value) {
+              if (value == 'analyze') {
+                _analyzeSubtitle();
+              } else if (value == 'vocab') {
+                _extractVocab();
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'analyze',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.auto_awesome),
+                  title: Text('AI 解析字幕'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 'vocab',
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.style_outlined),
+                  title: Text('提取生词到生词本'),
+                ),
+              ),
+            ],
           ),
         ],
       ),

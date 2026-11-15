@@ -171,11 +171,29 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   }
 
   void _showWord(String word, String sentence) {
+    final matched = _matched;
+    ContentToken? token;
+    if (matched != null) {
+      for (final segment in matched.document.segments) {
+        if (segment.text != sentence) {
+          continue;
+        }
+        for (final candidate in segment.tokens) {
+          if (candidate.surface.toLowerCase() == word.toLowerCase()) {
+            token = candidate;
+            break;
+          }
+        }
+        break;
+      }
+    }
     showWordExplanation(
       context,
       word: word,
       sentence: sentence,
-      language: _matched?.document.meta.language ?? 'en',
+      language: matched?.document.meta.language ?? 'en',
+      token: token,
+      sourceTitle: matched?.title,
     );
   }
 
@@ -321,7 +339,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
             const Divider(height: 20),
             if (active == null)
               Text(
-                '等待歌词时间轴…',
+                document.segments.isNotEmpty &&
+                        position > document.segments.last.endMs
+                    ? '歌词已结束'
+                    : '等待歌词时间轴…',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

@@ -86,11 +86,15 @@ class AiClient {
     );
   }
 
+  Future<String> chat({
+    required List<Map<String, String>> messages,
+    int maxTokens = 1200,
+  }) => _complete(messages: messages, maxTokens: maxTokens);
+
   Future<String> _complete({
     required List<Map<String, String>> messages,
     int maxTokens = 400,
-  }) async {
-    if (!config.isConfigured) {
+  }) async {    if (!config.isConfigured) {
       throw AiException('请先在设置中配置 AI 接口地址和 API Key');
     }
     final response = await _client
