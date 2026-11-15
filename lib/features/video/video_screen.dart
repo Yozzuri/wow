@@ -28,6 +28,7 @@ class VideoScreen extends ConsumerStatefulWidget {
 class _VideoScreenState extends ConsumerState<VideoScreen> {
   VideoPlayerController? _controller;
   ContentDocument? _document;
+  ContentDocument? _baseDocument;
   String? _videoName;
   String? _subtitleName;
   bool _busy = false;
@@ -67,7 +68,9 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         _controller = next;
         _videoName = file.name;
         _document = null;
+        _baseDocument = null;
         _subtitleName = null;
+        _notesExpanded = false;
       });
     } catch (error) {
       await next?.dispose();
@@ -104,25 +107,36 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         return;
       }
       final title = _stripExtension(_videoName ?? '未命名视频');
+      final detected = detectLanguage(text);
       final document = ContentDocument(
         meta: ContentMeta(
           title: title,
           source: _videoName,
-          language: _language,
+          language: detected,
           durationMs: _controller?.value.duration.inMilliseconds,
         ),
         segments: parsed.segments,
       );
       setState(() {
+        _language = detected;
+        _baseDocument = document;
         _document = document;
+        _notesExpanded = false;
         _subtitleName = '${file.name} · ${parsed.format.toUpperCase()}';
       });
       final cached = await const ContentStore().loadAnalysis(document);
-      if (cached != null && mounted) {
+      if (!mounted) {
+        return;
+      }
+      if (cached != null) {
         setState(() => _document = cached);
-        _showMessage('已载入 ${cached.segments.length} 条字幕（含 AI 解析缓存）');
+        _showMessage(
+          '已载入 ${cached.segments.length} 条字幕 · ${readingLanguageFor(detected).label}（含 AI 缓存）',
+        );
       } else {
-        _showMessage('已载入 ${parsed.segments.length} 条字幕');
+        _showMessage(
+          '已载入 ${parsed.segments.length} 条字幕 · 识别为 ${readingLanguageFor(detected).label}',
+        );
       }
     } catch (error) {
       _showMessage('字幕解析失败：$error');
@@ -347,16 +361,32 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     await _controller?.setPlaybackSpeed(speed);
   }
 
-  void _changeLanguage(String code) {
-    setState(() => _language = code);
-    final document = _document;
-    if (document != null && document.meta.language != code) {
-      setState(
-        () => _document = document.copyWith(
-          meta: document.meta.copyWith(language: code),
-        ),
-      );
+  Future<void> _changeLanguage(String code) async {
+    final base = _baseDocument;
+    if (base == null || base.meta.language == code) {
+      setState(() => _language = code);
+      return;
     }
+    final updatedBase = base.copyWith(
+      meta: base.meta.copyWith(language: code),
+    );
+    final cached = await const ContentStore().loadAnalysis(updatedBase);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _language = code;
+      _baseDocument = updatedBase;
+      _document = cached ?? updatedBase;
+      if (cached == null) {
+        _notesExpanded = false;
+      }
+    });
+    _showMessage(
+      cached == null
+          ? '字幕语言已设为 ${readingLanguageFor(code).label}，重新展开即可用该语言解析'
+          : '已切换为 ${readingLanguageFor(code).label} 并载入缓存',
+    );
   }
 
   @override

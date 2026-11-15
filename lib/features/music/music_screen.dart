@@ -133,6 +133,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     try {
       final bytes = file.bytes ?? await File(file.path!).readAsBytes();
       final text = const Utf8Decoder(allowMalformed: true).convert(bytes);
+      final detected = detectLanguage(text);
       final parsed = SubtitleParser.parse(text, fileName: file.name);
       if (parsed.segments.isEmpty) {
         _showMessage('没有解析到歌词内容');
@@ -152,14 +153,19 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
         meta: ContentMeta(
           title: title,
           source: artist,
-          language: _language,
+          language: detected,
           durationMs: _nowPlaying?.durationMs,
         ),
         segments: parsed.segments,
       );
       await _store.save(document);
+      if (mounted) {
+        setState(() => _language = detected);
+      }
       await _loadEntries();
-      _showMessage('歌词已导入：$title');
+      _showMessage(
+        '歌词已导入：$title · ${readingLanguageFor(detected).label}',
+      );
     } catch (error) {
       _showMessage('歌词导入失败：$error');
     } finally {
@@ -180,12 +186,17 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     if (matched == null) {
       return;
     }
-    final updated = matched.document.copyWith(
+    final base = matched.document.withoutAnalysis().copyWith(
       meta: matched.document.meta.copyWith(language: code),
     );
-    await _store.save(updated);
+    final cached = await const ContentStore().loadAnalysis(base);
+    await _store.save(cached ?? base);
     await _loadEntries();
-    _showMessage('歌词语言已设为 ${readingLanguageFor(code).label}');
+    _showMessage(
+      cached == null
+          ? '歌词语言已设为 ${readingLanguageFor(code).label}，展开时会用该语言解析'
+          : '歌词语言已设为 ${readingLanguageFor(code).label}，已载入缓存',
+    );
   }
 
   void _showMessage(String message) {
@@ -446,7 +457,7 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
         widget.matched?.document.meta.language;
     if (pathChanged || languageChanged) {
       _document = widget.matched?.document;
-      if (pathChanged) {
+      if (pathChanged || languageChanged) {
         _expanded = false;
       }
     }

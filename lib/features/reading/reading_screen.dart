@@ -50,9 +50,9 @@ class _ReadingScreenState extends ConsumerState<ReadingScreen> {
     });
   }
 
-  Future<_ImportOptions?> _askOptions() {
-    var language = 'en';
-    var preprocess = false;
+  Future<_ImportOptions?> _askOptions(String initialLanguage) {
+    var language = initialLanguage;
+    var preprocess = !readingLanguageFor(initialLanguage).usesSpaces;
     return showDialog<_ImportOptions>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -118,10 +118,6 @@ class _ReadingScreenState extends ConsumerState<ReadingScreen> {
   }
 
   Future<void> _importBook() async {
-    final options = await _askOptions();
-    if (options == null) {
-      return;
-    }
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['txt', 'epub'],
@@ -146,8 +142,20 @@ class _ReadingScreenState extends ConsumerState<ReadingScreen> {
       if (content.trim().isEmpty) {
         throw const FormatException('文件内容为空');
       }
-      if (options.preprocess && !readingLanguageFor(options.language).usesSpaces) {
+      final detected = detectLanguage(content);
+      final options = await _askOptions(detected);
+      if (options == null) {
+        return;
+      }
+      if (mounted) {
+        setState(() => _progress = '准备导入…');
+      }
+      if (options.preprocess &&
+          !readingLanguageFor(options.language).usesSpaces) {
         content = await _preprocessWithAi(content, options.language);
+        if (content.trim().isEmpty) {
+          throw const FormatException('AI 预处理没有返回内容，已取消导入');
+        }
       }
       final title = file.name.contains('.')
           ? file.name.substring(0, file.name.lastIndexOf('.'))
@@ -163,9 +171,13 @@ class _ReadingScreenState extends ConsumerState<ReadingScreen> {
       await _store.save(book);
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('已导入读物：$title')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '已导入读物：$title · ${readingLanguageFor(options.language).label}',
+            ),
+          ),
+        );
       }
     } catch (error) {
       if (mounted) {

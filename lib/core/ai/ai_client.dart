@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'ai_settings.dart';
+import '../language/languages.dart';
 
 class AiException implements Exception {
   AiException(this.message);
@@ -51,8 +52,9 @@ class AiClient {
           'role': 'system',
           'content':
               'You are a concise language tutor. Answer in Chinese. '
-              'Explain the target word in context: phonetic, part of speech, '
-              'meaning in this sentence, and one short example.',
+              'The target language is ${readingLanguageFor(language).label}. '
+              'Explain the target word or phrase in context: base form, reading, '
+              'part of speech, meaning in this sentence, and one short example.',
         },
         {
           'role': 'user',
@@ -96,6 +98,7 @@ class AiClient {
           'role': 'system',
           'content':
               'You are a concise language tutor. Answer in Chinese. '
+              'The target language is ${readingLanguageFor(language).label}. '
               'Translate the sentence, explain its structure briefly, and list '
               'the most useful phrases with short meanings.',
         },

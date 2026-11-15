@@ -212,6 +212,19 @@ class ContentDocument {
   ContentSegment? get firstSegment =>
       segments.isEmpty ? null : segments.first;
 
+  ContentDocument withoutAnalysis() => copyWith(
+    segments: segments
+        .map(
+          (segment) => ContentSegment(
+            index: segment.index,
+            startMs: segment.startMs,
+            endMs: segment.endMs,
+            text: segment.text,
+          ),
+        )
+        .toList(),
+  );
+
   bool get hasRichAnalysis => segments.any(
     (segment) =>
         (segment.translation ?? '').isNotEmpty ||

@@ -86,7 +86,12 @@ class _WordbookImportScreenState extends ConsumerState<WordbookImportScreen> {
     if (bytes == null) {
       return;
     }
-    _sourceController.text = utf8.decode(bytes, allowMalformed: true);
+    final text = utf8.decode(bytes, allowMalformed: true);
+    _sourceController.text = text;
+    final detected = detectLanguage(text);
+    if (mounted) {
+      setState(() => _language = detected);
+    }
     if (_nameController.text == '导入词书' && file.name.contains('.')) {
       _nameController.text = file.name.substring(0, file.name.lastIndexOf('.'));
     }

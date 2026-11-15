@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+export '../language/languages.dart';
+
 import 'package:path_provider/path_provider.dart';
 
 class ReadingBook {
@@ -100,32 +102,3 @@ class ReadingStore {
   }
 }
 
-class ReadingLanguage {
-  const ReadingLanguage({
-    required this.code,
-    required this.label,
-    required this.usesSpaces,
-  });
-
-  final String code;
-  final String label;
-  final bool usesSpaces;
-}
-
-const readingLanguages = <ReadingLanguage>[
-  ReadingLanguage(code: 'en', label: '英语', usesSpaces: true),
-  ReadingLanguage(code: 'ja', label: '日语', usesSpaces: false),
-  ReadingLanguage(code: 'zh', label: '中文', usesSpaces: false),
-  ReadingLanguage(code: 'ko', label: '韩语', usesSpaces: true),
-  ReadingLanguage(code: 'es', label: '西班牙语', usesSpaces: true),
-  ReadingLanguage(code: 'fr', label: '法语', usesSpaces: true),
-  ReadingLanguage(code: 'de', label: '德语', usesSpaces: true),
-  ReadingLanguage(code: 'ru', label: '俄语', usesSpaces: true),
-  ReadingLanguage(code: 'th', label: '泰语', usesSpaces: false),
-  ReadingLanguage(code: 'other', label: '其他', usesSpaces: true),
-];
-
-ReadingLanguage readingLanguageFor(String code) => readingLanguages
-    .firstWhere((language) => language.code == code, orElse: () => readingLanguages.last);
-
-bool languageUsesSpaces(String code) => readingLanguageFor(code).usesSpaces;

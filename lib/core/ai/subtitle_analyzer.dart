@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'ai_client.dart';
 import 'ai_settings.dart';
+import '../language/languages.dart';
 import '../models/content_document.dart';
 
 class AnalyzedSegment {
@@ -142,8 +143,8 @@ class SubtitleAnalyzer {
             'Keep every input index exactly once. Include at most 8 useful content tokens, '
             '0-2 grammar notes and 0-4 useful phrases per segment. Phrases must appear '
             'in the original text. For Japanese, Chinese or Thai, segment tokens into '
-            'natural words instead of single characters. Source language: $language. '
-            'Do not add commentary.',
+            'natural words instead of single characters. Source language: '
+            '${readingLanguageFor(language).label} ($language). Do not add commentary.',
       },
       {'role': 'user', 'content': jsonEncode(payload)},
     ];
