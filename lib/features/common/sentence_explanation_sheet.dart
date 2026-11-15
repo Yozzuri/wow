@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
+import 'ai_markdown.dart';
 
 class SentenceExplanationSheet extends ConsumerStatefulWidget {
   const SentenceExplanationSheet({
@@ -101,7 +102,7 @@ class _SentenceExplanationSheetState
                   style: TextStyle(color: theme.colorScheme.error),
                 )
               else
-                SelectableText(_result ?? '', style: theme.textTheme.bodyMedium),
+                AiMarkdown(data: _result ?? ''),
             ],
           ),
         ),

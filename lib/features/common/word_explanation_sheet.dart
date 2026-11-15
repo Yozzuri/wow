@@ -5,6 +5,7 @@ import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/models/content_document.dart';
 import '../../core/vocab/vocab_store.dart';
+import 'ai_markdown.dart';
 
 class WordExplanationSheet extends ConsumerStatefulWidget {
   const WordExplanationSheet({
@@ -191,10 +192,7 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                   style: TextStyle(color: theme.colorScheme.error),
                 )
               else if (_result != null)
-                SelectableText(
-                  _result!,
-                  style: theme.textTheme.bodyMedium,
-                ),
+                AiMarkdown(data: _result!),
               const SizedBox(height: 16),
               Row(
                 children: [
