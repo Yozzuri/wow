@@ -1,5 +1,5 @@
 name: langlearn
-description: "A new Flutter project."
+description: "Language learning app: video, subtitles, vocabulary, grammar, music lyrics."
 publish_to: 'none'
 version: 0.1.0+1
 
@@ -9,6 +9,16 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_riverpod: ^2.6.1
+  go_router: ^14.8.1
+  video_player: ^2.9.2
+  file_picker: ^8.1.7
+  shared_preferences: ^2.3.5
+  flutter_secure_storage: ^9.2.4
+  path_provider: ^2.1.5
+  http: ^1.3.0
+  crypto: ^3.0.6
+  collection: ^1.19.1
 
 dev_dependencies:
   flutter_test:
