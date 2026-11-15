@@ -7,11 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
+import '../../core/ai/ai_settings.dart';
+import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/library/lyrics_store.dart';
 import '../../core/media/media_session_service.dart';
 import '../../core/models/content_document.dart';
+import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
 import '../common/interactive_line.dart';
+import '../common/segment_notes.dart';
 import '../common/word_explanation_sheet.dart';
 
 class MusicScreen extends ConsumerStatefulWidget {
@@ -355,7 +359,7 @@ class _SongInfoTab extends StatelessWidget {
   }
 }
 
-class _ImmersiveLyricsTab extends StatelessWidget {
+class _ImmersiveLyricsTab extends ConsumerStatefulWidget {
   const _ImmersiveLyricsTab({
     required this.matched,
     required this.nowPlaying,
@@ -375,9 +379,105 @@ class _ImmersiveLyricsTab extends StatelessWidget {
   final Future<void> Function() onOpenSettings;
 
   @override
+  ConsumerState<_ImmersiveLyricsTab> createState() =>
+      _ImmersiveLyricsTabState();
+}
+
+class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
+  ContentDocument? _document;
+  bool _expanded = false;
+  bool _analyzing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _document = widget.matched?.document;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ImmersiveLyricsTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.matched?.filePath != widget.matched?.filePath) {
+      _document = widget.matched?.document;
+      _expanded = false;
+    }
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _toggleNotes() async {
+    final document = _document;
+    if (document == null) {
+      return;
+    }
+    if (_expanded) {
+      setState(() => _expanded = false);
+      return;
+    }
+    if (document.hasRichAnalysis) {
+      setState(() => _expanded = true);
+      return;
+    }
+    final config = await ref.read(aiConfigProvider.future);
+    if (!config.isConfigured) {
+      _showMessage('请先在「设置」页配置 AI 接口');
+      return;
+    }
+    setState(() => _analyzing = true);
+    try {
+      final segments = await const SubtitleAnalyzer().analyze(
+        config: config,
+        document: document,
+      );
+      final enriched = document.copyWith(segments: segments);
+      await const ContentStore().saveAnalysis(enriched);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _document = enriched;
+        _expanded = true;
+      });
+      _showMessage('AI 解析完成');
+    } catch (error) {
+      _showMessage('AI 解析失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() => _analyzing = false);
+      }
+    }
+  }
+
+  void _showPhrase(ContentPhrase phrase, ContentSegment segment) {
+    final meaning = [phrase.meaning, phrase.usage]
+        .where((value) => value != null && value.isNotEmpty)
+        .join(' · ');
+    showWordExplanation(
+      context,
+      word: phrase.text,
+      sentence: segment.text,
+      language: _document?.meta.language ?? 'en',
+      token: ContentToken(
+        surface: phrase.text,
+        lemma: phrase.text,
+        pos: 'phrase',
+        meaning: meaning.isEmpty ? null : meaning,
+      ),
+      sourceTitle: widget.matched?.title,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (matched == null) {
+    if (widget.matched == null || _document == null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -391,9 +491,9 @@ class _ImmersiveLyricsTab extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                !hasAccess
+                !widget.hasAccess
                     ? '授予通知使用权后即可读取系统播放的歌曲'
-                    : nowPlaying == null
+                    : widget.nowPlaying == null
                     ? '等待系统播放音乐…'
                     : '未找到匹配的歌词',
                 textAlign: TextAlign.center,
@@ -401,11 +501,15 @@ class _ImmersiveLyricsTab extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: hasAccess ? onImport : onOpenSettings,
+                onPressed: widget.hasAccess
+                    ? widget.onImport
+                    : widget.onOpenSettings,
                 icon: Icon(
-                  hasAccess ? Icons.lyrics_outlined : Icons.settings,
+                  widget.hasAccess ? Icons.lyrics_outlined : Icons.settings,
                 ),
-                label: Text(hasAccess ? '导入 LRC 歌词' : '打开系统设置'),
+                label: Text(
+                  widget.hasAccess ? '导入 LRC 歌词' : '打开系统设置',
+                ),
               ),
             ],
           ),
@@ -413,13 +517,17 @@ class _ImmersiveLyricsTab extends StatelessWidget {
       );
     }
     return _ImmersiveLyrics(
-      document: matched!.document,
-      title: matched!.title,
-      artist: matched!.artist,
-      positionMs: nowPlaying?.positionMs ?? 0,
-      durationMs: nowPlaying?.durationMs ?? 0,
-      onWordTap: onWordTap,
-      onSeek: onSeek,
+      document: _document!,
+      title: widget.matched!.title,
+      artist: widget.matched!.artist,
+      positionMs: widget.nowPlaying?.positionMs ?? 0,
+      durationMs: widget.nowPlaying?.durationMs ?? 0,
+      expanded: _expanded,
+      analyzing: _analyzing,
+      onToggleNotes: _toggleNotes,
+      onPhraseTap: _showPhrase,
+      onWordTap: widget.onWordTap,
+      onSeek: widget.onSeek,
     );
   }
 }
@@ -431,6 +539,10 @@ class _ImmersiveLyrics extends StatefulWidget {
     required this.artist,
     required this.positionMs,
     required this.durationMs,
+    required this.expanded,
+    required this.analyzing,
+    required this.onToggleNotes,
+    required this.onPhraseTap,
     required this.onWordTap,
     required this.onSeek,
   });
@@ -440,6 +552,10 @@ class _ImmersiveLyrics extends StatefulWidget {
   final String artist;
   final int positionMs;
   final int durationMs;
+  final bool expanded;
+  final bool analyzing;
+  final VoidCallback onToggleNotes;
+  final void Function(ContentPhrase phrase, ContentSegment segment) onPhraseTap;
   final void Function(String word, String sentence) onWordTap;
   final Future<void> Function(int positionMs) onSeek;
 
@@ -491,21 +607,47 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-          child: Column(
+          padding: const EdgeInsets.fromLTRB(24, 16, 12, 4),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                widget.title,
-                style: theme.textTheme.titleLarge,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: theme.textTheme.titleLarge,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (widget.artist.isNotEmpty)
+                      Text(
+                        widget.artist,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
+                ),
               ),
-              if (widget.artist.isNotEmpty)
-                Text(
-                  widget.artist,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
+              if (widget.analyzing)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  tooltip: widget.expanded ? '收起语法与短语' : '展开语法与短语',
+                  onPressed: widget.onToggleNotes,
+                  icon: Icon(
+                    widget.expanded
+                        ? Icons.unfold_less
+                        : Icons.unfold_more,
                   ),
                 ),
             ],
@@ -535,29 +677,42 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                 if (isActive) {
                   return Padding(
                     padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
-                    child: InteractiveLine(
-                      text: segment.text,
-                      translation: segment.translation,
-                      onWordTap: widget.onWordTap,
-                      textAlign: TextAlign.left,
-                      baseStyle: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontSize: 23,
-                        height: 1.4,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      wordStyle: TextStyle(
-                        color: theme.colorScheme.primary,
-                        fontSize: 23,
-                        height: 1.4,
-                        fontWeight: FontWeight.w700,
-                        decoration: TextDecoration.underline,
-                        decorationColor: theme.colorScheme.primary,
-                        decorationStyle: TextDecorationStyle.dotted,
-                      ),
-                      translationStyle: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        InteractiveLine(
+                          text: segment.text,
+                          translation: segment.translation,
+                          onWordTap: widget.onWordTap,
+                          textAlign: TextAlign.left,
+                          baseStyle: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontSize: 23,
+                            height: 1.4,
+                            fontWeight: FontWeight.w700,
+                          ),
+                          wordStyle: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontSize: 23,
+                            height: 1.4,
+                            fontWeight: FontWeight.w700,
+                            decoration: TextDecoration.underline,
+                            decorationColor: theme.colorScheme.primary,
+                            decorationStyle: TextDecorationStyle.dotted,
+                          ),
+                          translationStyle: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        if (widget.expanded) ...[
+                          const SizedBox(height: 8),
+                          SegmentNotes(
+                            segment: segment,
+                            onPhraseTap: (phrase) =>
+                                widget.onPhraseTap(phrase, segment),
+                          ),
+                        ],
+                      ],
                     ),
                   );
                 }

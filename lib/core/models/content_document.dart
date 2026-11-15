@@ -60,6 +60,26 @@ class ContentToken {
   );
 }
 
+class ContentPhrase {
+  const ContentPhrase({required this.text, this.meaning, this.usage});
+
+  final String text;
+  final String? meaning;
+  final String? usage;
+
+  Map<String, dynamic> toJson() => {
+    'text': text,
+    if (meaning != null) 'meaning': meaning,
+    if (usage != null) 'usage': usage,
+  };
+
+  factory ContentPhrase.fromJson(Map<String, dynamic> json) => ContentPhrase(
+    text: json['text'] as String? ?? '',
+    meaning: json['meaning'] as String?,
+    usage: json['usage'] as String?,
+  );
+}
+
 class GrammarNote {
   const GrammarNote({required this.pattern, required this.explanation});
 
@@ -86,6 +106,7 @@ class ContentSegment {
     this.translation,
     this.tokens = const [],
     this.grammar = const [],
+    this.phrases = const [],
   });
 
   final int index;
@@ -95,6 +116,7 @@ class ContentSegment {
   final String? translation;
   final List<ContentToken> tokens;
   final List<GrammarNote> grammar;
+  final List<ContentPhrase> phrases;
 
   int get durationMs => endMs - startMs;
 
@@ -107,6 +129,8 @@ class ContentSegment {
     if (tokens.isNotEmpty) 'tokens': tokens.map((t) => t.toJson()).toList(),
     if (grammar.isNotEmpty)
       'grammar': grammar.map((g) => g.toJson()).toList(),
+    if (phrases.isNotEmpty)
+      'phrases': phrases.map((p) => p.toJson()).toList(),
   };
 
   factory ContentSegment.fromJson(Map<String, dynamic> json) => ContentSegment(
@@ -125,12 +149,18 @@ class ContentSegment {
             ?.map((e) => GrammarNote.fromJson(e as Map<String, dynamic>))
             .toList() ??
         const [],
+    phrases:
+        (json['phrases'] as List?)
+            ?.map((e) => ContentPhrase.fromJson(e as Map<String, dynamic>))
+            .toList() ??
+        const [],
   );
 
   ContentSegment copyWith({
     String? translation,
     List<ContentToken>? tokens,
     List<GrammarNote>? grammar,
+    List<ContentPhrase>? phrases,
   }) => ContentSegment(
     index: index,
     startMs: startMs,
@@ -139,6 +169,7 @@ class ContentSegment {
     translation: translation ?? this.translation,
     tokens: tokens ?? this.tokens,
     grammar: grammar ?? this.grammar,
+    phrases: phrases ?? this.phrases,
   );
 }
 
@@ -168,6 +199,14 @@ class ContentDocument {
 
   ContentSegment? get firstSegment =>
       segments.isEmpty ? null : segments.first;
+
+  bool get hasRichAnalysis => segments.any(
+    (segment) =>
+        (segment.translation ?? '').isNotEmpty ||
+        segment.tokens.isNotEmpty ||
+        segment.grammar.isNotEmpty ||
+        segment.phrases.isNotEmpty,
+  );
 
   Map<String, dynamic> toJson() => {
     'schemaVersion': schemaVersion,

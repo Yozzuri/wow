@@ -86,6 +86,47 @@ class AiClient {
     );
   }
 
+  Future<String> explainSentence({
+    required String sentence,
+    String language = 'en',
+  }) {
+    return _complete(
+      messages: [
+        {
+          'role': 'system',
+          'content':
+              'You are a concise language tutor. Answer in Chinese. '
+              'Translate the sentence, explain its structure briefly, and list '
+              'the most useful phrases with short meanings.',
+        },
+        {
+          'role': 'user',
+          'content': 'Language: $language\nSentence: $sentence',
+        },
+      ],
+      maxTokens: 600,
+    );
+  }
+
+  Future<String> segmentText({
+    required String text,
+    required String language,
+  }) {
+    return _complete(
+      messages: [
+        {
+          'role': 'system',
+          'content':
+              'Insert spaces between words in the given $language text so that '
+              'each word can be looked up separately. Keep punctuation and line '
+              'breaks unchanged. Output only the processed text.',
+        },
+        {'role': 'user', 'content': text},
+      ],
+      maxTokens: 3000,
+    );
+  }
+
   Future<String> chat({
     required List<Map<String, String>> messages,
     int maxTokens = 1200,

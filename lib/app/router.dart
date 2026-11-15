@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/grammar/grammar_screen.dart';
 import '../features/music/music_screen.dart';
+import '../features/reading/reading_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/video/video_screen.dart';
 import '../features/vocab/vocab_screen.dart';
@@ -35,6 +36,14 @@ final GoRouter appRouter = GoRouter(
             GoRoute(
               path: '/grammar',
               builder: (context, state) => const GrammarScreen(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/reading',
+              builder: (context, state) => const ReadingScreen(),
             ),
           ],
         ),
@@ -89,6 +98,11 @@ class AppShell extends StatelessWidget {
             icon: Icon(Icons.menu_book_outlined),
             selectedIcon: Icon(Icons.menu_book),
             label: '语法',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.auto_stories_outlined),
+            selectedIcon: Icon(Icons.auto_stories),
+            label: '阅读',
           ),
           NavigationDestination(
             icon: Icon(Icons.music_note_outlined),

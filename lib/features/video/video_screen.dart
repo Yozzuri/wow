@@ -14,6 +14,7 @@ import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
 import '../../core/vocab/vocab_store.dart';
 import '../common/interactive_line.dart';
+import '../common/segment_notes.dart';
 import '../common/word_explanation_sheet.dart';
 
 class VideoScreen extends ConsumerStatefulWidget {
@@ -30,6 +31,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   String? _subtitleName;
   bool _busy = false;
   bool _analyzing = false;
+  bool _notesExpanded = false;
   double _speed = 1.0;
 
   @override
@@ -178,6 +180,45 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
       token: _tokenFor(word, sentence),
       sourceTitle: _document?.meta.title,
     );
+  }
+
+  void _showPhrase(ContentPhrase phrase, ContentSegment segment) {
+    final meaning = [phrase.meaning, phrase.usage]
+        .where((value) => value != null && value.isNotEmpty)
+        .join(' · ');
+    showWordExplanation(
+      context,
+      word: phrase.text,
+      sentence: segment.text,
+      language: _document?.meta.language ?? 'en',
+      token: ContentToken(
+        surface: phrase.text,
+        lemma: phrase.text,
+        pos: 'phrase',
+        meaning: meaning.isEmpty ? null : meaning,
+      ),
+      sourceTitle: _document?.meta.title,
+    );
+  }
+
+  Future<void> _toggleNotes() async {
+    final document = _document;
+    if (document == null) {
+      return;
+    }
+    if (_notesExpanded) {
+      setState(() => _notesExpanded = false);
+      return;
+    }
+    if (!document.hasRichAnalysis) {
+      await _analyzeSubtitle();
+    }
+    if (!mounted) {
+      return;
+    }
+    if (_document?.hasRichAnalysis ?? false) {
+      setState(() => _notesExpanded = true);
+    }
   }
 
   void _showGrammar(ContentSegment segment) {
@@ -374,6 +415,8 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                     title: _subtitleName ?? '字幕',
                     count: _document!.segments.length,
                     analyzing: _analyzing,
+                    notesExpanded: _notesExpanded,
+                    onToggleNotes: _toggleNotes,
                     onAnalyze: _analyzeSubtitle,
                     onExtract: _extractVocab,
                   ),
@@ -381,8 +424,10 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                     child: _ScrollingSubtitles(
                       controller: controller,
                       document: _document!,
+                      notesExpanded: _notesExpanded,
                       onWordTap: _showWord,
                       onGrammarTap: _showGrammar,
+                      onPhraseTap: _showPhrase,
                     ),
                   ),
                 ],
@@ -554,6 +599,8 @@ class _SubtitleHeader extends StatelessWidget {
     required this.title,
     required this.count,
     required this.analyzing,
+    required this.notesExpanded,
+    required this.onToggleNotes,
     required this.onAnalyze,
     required this.onExtract,
   });
@@ -561,6 +608,8 @@ class _SubtitleHeader extends StatelessWidget {
   final String title;
   final int count;
   final bool analyzing;
+  final bool notesExpanded;
+  final VoidCallback onToggleNotes;
   final VoidCallback onAnalyze;
   final VoidCallback onExtract;
 
@@ -585,6 +634,13 @@ class _SubtitleHeader extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+          IconButton(
+            tooltip: notesExpanded ? '收起语法与短语' : '展开语法与短语',
+            onPressed: onToggleNotes,
+            icon: Icon(
+              notesExpanded ? Icons.unfold_less : Icons.unfold_more,
             ),
           ),
           IconButton(
@@ -617,14 +673,18 @@ class _ScrollingSubtitles extends StatefulWidget {
   const _ScrollingSubtitles({
     required this.controller,
     required this.document,
+    required this.notesExpanded,
     required this.onWordTap,
     required this.onGrammarTap,
+    required this.onPhraseTap,
   });
 
   final VideoPlayerController controller;
   final ContentDocument document;
+  final bool notesExpanded;
   final void Function(String word, String sentence) onWordTap;
   final void Function(ContentSegment segment) onGrammarTap;
+  final void Function(ContentPhrase phrase, ContentSegment segment) onPhraseTap;
 
   @override
   State<_ScrollingSubtitles> createState() => _ScrollingSubtitlesState();
@@ -755,7 +815,17 @@ class _ScrollingSubtitlesState extends State<_ScrollingSubtitles> {
                   ),
                 ),
               ),
-              if (segment.grammar.isNotEmpty) ...[
+              if (widget.notesExpanded) ...[
+                const SizedBox(height: 8),
+                SegmentNotes(
+                  segment: segment,
+                  textColor: theme.colorScheme.onPrimaryContainer.withValues(
+                    alpha: 0.9,
+                  ),
+                  onPhraseTap: (phrase) =>
+                      widget.onPhraseTap(phrase, segment),
+                ),
+              ] else if (segment.grammar.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Align(
                   alignment: Alignment.centerLeft,

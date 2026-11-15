@@ -10,11 +10,13 @@ class AnalyzedSegment {
     this.translation,
     this.tokens = const [],
     this.grammar = const [],
+    this.phrases = const [],
   });
 
   final String? translation;
   final List<ContentToken> tokens;
   final List<GrammarNote> grammar;
+  final List<ContentPhrase> phrases;
 }
 
 class SubtitleAnalyzer {
@@ -51,6 +53,9 @@ class SubtitleAnalyzer {
                   grammar: result.grammar.isEmpty
                       ? segment.grammar
                       : result.grammar,
+                  phrases: result.phrases.isEmpty
+                      ? segment.phrases
+                      : result.phrases,
                 ),
         );
       }
@@ -102,10 +107,11 @@ class SubtitleAnalyzer {
             '{"segments":[{"index":0,"translation":"Chinese translation",'
             '"tokens":[{"surface":"word as in text","lemma":"base form",'
             '"pos":"part of speech","meaning":"short Chinese meaning in context"}],'
-            '"grammar":[{"pattern":"pattern","explanation":"short Chinese explanation"}]}]}. '
-            'Keep every input index exactly once. Include at most 8 useful content tokens '
-            'per segment and 0-2 grammar notes. Source language: $language. '
-            'Do not add commentary.',
+            '"grammar":[{"pattern":"pattern","explanation":"short Chinese explanation"}],'
+            '"phrases":[{"text":"multi-word phrase from the text","meaning":"short Chinese meaning","usage":"short usage note"}]}]}. '
+            'Keep every input index exactly once. Include at most 8 useful content tokens, '
+            '0-2 grammar notes and 0-4 useful phrases per segment. Phrases must appear '
+            'in the original text. Source language: $language. Do not add commentary.',
       },
       {'role': 'user', 'content': jsonEncode(payload)},
     ];
@@ -184,17 +190,41 @@ Map<int, AnalyzedSegment> parseAnalysisResponse(String raw) {
         grammar.add(GrammarNote(pattern: pattern, explanation: explanation));
       }
     }
+    final phrases = <ContentPhrase>[];
+    final rawPhrases = item['phrases'];
+    if (rawPhrases is List) {
+      for (final rawPhrase in rawPhrases) {
+        if (rawPhrase is! Map) {
+          continue;
+        }
+        final text = (rawPhrase['text'] as String?)?.trim();
+        if (text == null || text.isEmpty) {
+          continue;
+        }
+        phrases.add(
+          ContentPhrase(
+            text: text,
+            meaning: (rawPhrase['meaning'] as String?)?.trim(),
+            usage: (rawPhrase['usage'] as String?)?.trim(),
+          ),
+        );
+      }
+    }
     final translation = (item['translation'] as String?)?.trim();
     final resolvedTranslation = (translation == null || translation.isEmpty)
         ? null
         : translation;
-    if (resolvedTranslation == null && tokens.isEmpty && grammar.isEmpty) {
+    if (resolvedTranslation == null &&
+        tokens.isEmpty &&
+        grammar.isEmpty &&
+        phrases.isEmpty) {
       continue;
     }
     result[index.toInt()] = AnalyzedSegment(
       translation: resolvedTranslation,
       tokens: tokens,
       grammar: grammar,
+      phrases: phrases,
     );
   }
   if (result.isEmpty) {
