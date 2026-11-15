@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../core/library/lyrics_store.dart';
 import '../../core/media/media_session_service.dart';
@@ -199,7 +200,6 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
         title: const Text('音乐'),
@@ -216,190 +216,393 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _bootstrap,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            if (_checkingAccess)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (!_hasAccess)
-              _AccessCard(onOpenSettings: _service.openSettings)
-            else
-              _NowPlayingCard(nowPlaying: _nowPlaying),
-            const SizedBox(height: 16),
-            Text('歌词', style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _buildLyrics(theme),
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Text('已导入歌词', style: theme.textTheme.titleMedium),
-                const Spacer(),
-                if (_entries.isNotEmpty)
-                  Text(
-                    '${_entries.length} 首',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+      body: _checkingAccess
+          ? const Center(child: CircularProgressIndicator())
+          : DefaultTabController(
+              length: 2,
+              child: Column(
+                children: [
+                  const TabBar(
+                    tabs: [
+                      Tab(text: '歌曲信息'),
+                      Tab(text: '歌词'),
+                    ],
+                  ),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        Builder(
+                          builder: (context) => _SongInfoTab(
+                            hasAccess: _hasAccess,
+                            nowPlaying: _nowPlaying,
+                            entries: _entries,
+                            hasMatch: _matched != null,
+                            onOpenSettings: _service.openSettings,
+                            onImport: _importLyrics,
+                            onDelete: _deleteEntry,
+                            onOpenLyrics: () =>
+                                DefaultTabController.of(context).animateTo(1),
+                          ),
+                        ),
+                        _ImmersiveLyricsTab(
+                          matched: _matched,
+                          nowPlaying: _nowPlaying,
+                          hasAccess: _hasAccess,
+                          onWordTap: _showWord,
+                          onSeek: _service.seek,
+                          onImport: _importLyrics,
+                          onOpenSettings: _service.openSettings,
+                        ),
+                      ],
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
-            const SizedBox(height: 4),
-            if (_entries.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  '还没有导入歌词。播放歌曲后导入同名 LRC，会自动匹配。',
+    );
+  }
+}
+
+class _SongInfoTab extends StatelessWidget {
+  const _SongInfoTab({
+    required this.hasAccess,
+    required this.nowPlaying,
+    required this.entries,
+    required this.hasMatch,
+    required this.onOpenSettings,
+    required this.onImport,
+    required this.onDelete,
+    required this.onOpenLyrics,
+  });
+
+  final bool hasAccess;
+  final NowPlaying? nowPlaying;
+  final List<LyricsEntry> entries;
+  final bool hasMatch;
+  final Future<void> Function() onOpenSettings;
+  final Future<void> Function() onImport;
+  final Future<void> Function(LyricsEntry entry) onDelete;
+  final VoidCallback onOpenLyrics;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return RefreshIndicator(
+      onRefresh: onImport,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (!hasAccess)
+            _AccessCard(onOpenSettings: onOpenSettings)
+          else
+            _NowPlayingCard(nowPlaying: nowPlaying),
+          if (hasMatch) ...[
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: onOpenLyrics,
+              icon: const Icon(Icons.queue_music),
+              label: const Text('打开沉浸式歌词'),
+            ),
+          ],
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Text('已导入歌词', style: theme.textTheme.titleMedium),
+              const Spacer(),
+              if (entries.isNotEmpty)
+                Text(
+                  '${entries.length} 首',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-              )
-            else
-              ..._entries.map(
-                (entry) => ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: const Icon(Icons.description_outlined),
-                  title: Text(entry.title),
-                  subtitle: Text(
-                    entry.artist.isEmpty ? '未知歌手' : entry.artist,
-                  ),
-                  trailing: IconButton(
-                    tooltip: '删除',
-                    onPressed: () => _deleteEntry(entry),
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLyrics(ThemeData theme) {
-    final matched = _matched;
-    if (matched == null) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _nowPlaying == null ? '等待系统播放音乐…' : '未找到匹配的歌词',
-                style: theme.textTheme.bodyLarge,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '在网易云等 App 播放歌曲后，导入对应 LRC 文件即可同步显示。',
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (entries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                '还没有导入歌词。播放歌曲后导入同名 LRC，会自动匹配。',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
+            )
+          else
+            ...entries.map(
+              (entry) => ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.description_outlined),
+                title: Text(entry.title),
+                subtitle: Text(entry.artist.isEmpty ? '未知歌手' : entry.artist),
+                trailing: IconButton(
+                  tooltip: '删除',
+                  onPressed: () => onDelete(entry),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onImport,
+            icon: const Icon(Icons.lyrics_outlined),
+            label: const Text('导入 LRC 歌词'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ImmersiveLyricsTab extends StatelessWidget {
+  const _ImmersiveLyricsTab({
+    required this.matched,
+    required this.nowPlaying,
+    required this.hasAccess,
+    required this.onWordTap,
+    required this.onSeek,
+    required this.onImport,
+    required this.onOpenSettings,
+  });
+
+  final LyricsEntry? matched;
+  final NowPlaying? nowPlaying;
+  final bool hasAccess;
+  final void Function(String word, String sentence) onWordTap;
+  final Future<void> Function(int positionMs) onSeek;
+  final Future<void> Function() onImport;
+  final Future<void> Function() onOpenSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (matched == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.queue_music,
+                size: 64,
+                color: theme.colorScheme.primary,
+              ),
               const SizedBox(height: 12),
+              Text(
+                !hasAccess
+                    ? '授予通知使用权后即可读取系统播放的歌曲'
+                    : nowPlaying == null
+                    ? '等待系统播放音乐…'
+                    : '未找到匹配的歌词',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge,
+              ),
+              const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _importing ? null : _importLyrics,
-                icon: const Icon(Icons.lyrics_outlined),
-                label: const Text('导入 LRC'),
+                onPressed: hasAccess ? onImport : onOpenSettings,
+                icon: Icon(
+                  hasAccess ? Icons.lyrics_outlined : Icons.settings,
+                ),
+                label: Text(hasAccess ? '导入 LRC 歌词' : '打开系统设置'),
               ),
             ],
           ),
         ),
       );
     }
+    return _ImmersiveLyrics(
+      document: matched!.document,
+      title: matched!.title,
+      artist: matched!.artist,
+      positionMs: nowPlaying?.positionMs ?? 0,
+      durationMs: nowPlaying?.durationMs ?? 0,
+      onWordTap: onWordTap,
+      onSeek: onSeek,
+    );
+  }
+}
 
-    final document = matched.document;
-    final position = _nowPlaying?.positionMs ?? 0;
-    final active = document.segmentAt(position);
-    final activeIndex = active?.index ?? -1;
-    final nearby = <ContentSegment>[];
-    if (activeIndex >= 0) {
-      for (var offset = -2; offset <= 2; offset++) {
-        final index = activeIndex + offset;
-        if (index >= 0 && index < document.segments.length) {
-          nearby.add(document.segments[index]);
-        }
-      }
+class _ImmersiveLyrics extends StatefulWidget {
+  const _ImmersiveLyrics({
+    required this.document,
+    required this.title,
+    required this.artist,
+    required this.positionMs,
+    required this.durationMs,
+    required this.onWordTap,
+    required this.onSeek,
+  });
+
+  final ContentDocument document;
+  final String title;
+  final String artist;
+  final int positionMs;
+  final int durationMs;
+  final void Function(String word, String sentence) onWordTap;
+  final Future<void> Function(int positionMs) onSeek;
+
+  @override
+  State<_ImmersiveLyrics> createState() => _ImmersiveLyricsState();
+}
+
+class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
+  final ItemScrollController _scrollController = ItemScrollController();
+  int _activeIndex = -1;
+
+  int _indexFor(int positionMs) {
+    final segment = widget.document.segmentAt(positionMs);
+    return segment?.index ?? -1;
+  }
+
+  void _scheduleScroll(int index) {
+    if (index == _activeIndex) {
+      return;
     }
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '${matched.title}${matched.artist.isEmpty ? '' : ' · ${matched.artist}'}',
-              style: theme.textTheme.titleSmall,
-            ),
-            const Divider(height: 20),
-            if (active == null)
+    _activeIndex = index;
+    if (index < 0) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.isAttached) {
+        return;
+      }
+      _scrollController.scrollTo(
+        index: index,
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeOutCubic,
+        alignment: 0.36,
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final activeIndex = _indexFor(widget.positionMs);
+    _scheduleScroll(activeIndex);
+    final duration = widget.durationMs > 0
+        ? widget.durationMs
+        : widget.document.meta.durationMs ?? 0;
+    final progress = duration > 0
+        ? (widget.positionMs / duration).clamp(0.0, 1.0)
+        : 0.0;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                document.segments.isNotEmpty &&
-                        position > document.segments.last.endMs
-                    ? '歌词已结束'
-                    : '等待歌词时间轴…',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              )
-            else
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primaryContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: InteractiveLine(
-                  text: active.text,
-                  translation: active.translation,
-                  onWordTap: _showWord,
-                  baseStyle: TextStyle(
-                    color: theme.colorScheme.onPrimaryContainer,
-                    fontSize: 20,
-                    height: 1.4,
-                  ),
-                  wordStyle: TextStyle(
-                    color: theme.colorScheme.onPrimaryContainer,
-                    fontSize: 20,
-                    height: 1.4,
-                    fontWeight: FontWeight.w700,
-                    decoration: TextDecoration.underline,
-                    decorationColor: theme.colorScheme.primary,
-                    decorationStyle: TextDecorationStyle.dotted,
-                  ),
-                  translationStyle: TextStyle(
-                    color: theme.colorScheme.onPrimaryContainer.withValues(
-                      alpha: 0.8,
-                    ),
-                    fontSize: 14,
-                  ),
-                ),
+                widget.title,
+                style: theme.textTheme.titleLarge,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-            if (nearby.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...nearby
-                  .where((segment) => segment.index != activeIndex)
-                  .map(
-                    (segment) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text(
-                        segment.text.replaceAll('\n', ' '),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+              if (widget.artist.isNotEmpty)
+                Text(
+                  widget.artist,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ShaderMask(
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.transparent,
+                Colors.black,
+                Colors.black,
+                Colors.transparent,
+              ],
+              stops: [0.0, 0.12, 0.88, 1.0],
+            ).createShader(rect),
+            child: ScrollablePositionedList.builder(
+              itemScrollController: _scrollController,
+              itemCount: widget.document.segments.length,
+              padding: const EdgeInsets.symmetric(vertical: 120),
+              itemBuilder: (context, index) {
+                final segment = widget.document.segments[index];
+                final isActive = index == activeIndex;
+                if (isActive) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
+                    child: InteractiveLine(
+                      text: segment.text,
+                      translation: segment.translation,
+                      onWordTap: widget.onWordTap,
+                      textAlign: TextAlign.left,
+                      baseStyle: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontSize: 23,
+                        height: 1.4,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      wordStyle: TextStyle(
+                        color: theme.colorScheme.primary,
+                        fontSize: 23,
+                        height: 1.4,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.underline,
+                        decorationColor: theme.colorScheme.primary,
+                        decorationStyle: TextDecorationStyle.dotted,
+                      ),
+                      translationStyle: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  );
+                }
+                return InkWell(
+                  onTap: () => widget.onSeek(segment.startMs),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 7, 24, 7),
+                    child: Text(
+                      segment.text.replaceAll('\n', ' '),
+                      textAlign: TextAlign.left,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant.withValues(
+                          alpha: 0.55,
                         ),
+                        height: 1.4,
                       ),
                     ),
                   ),
-            ],
-          ],
+                );
+              },
+            ),
+          ),
         ),
-      ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+          child: Row(
+            children: [
+              Text(
+                _formatMs(widget.positionMs),
+                style: theme.textTheme.labelSmall,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 2,
+                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Text(_formatMs(duration), style: theme.textTheme.labelSmall),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -482,7 +685,7 @@ class _NowPlayingCard extends StatelessWidget {
             Row(
               children: [
                 CircleAvatar(
-                  radius: 24,
+                  radius: 28,
                   backgroundColor: theme.colorScheme.primaryContainer,
                   child: Icon(
                     nowPlaying.isPlaying

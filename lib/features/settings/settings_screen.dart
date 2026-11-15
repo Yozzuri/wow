@@ -1,8 +1,10 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
+import '../../core/appearance/appearance_settings.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -84,9 +86,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _pickBackground() async {
+    final result = await FilePicker.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    final file = (result != null && result.files.isNotEmpty)
+        ? result.files.first
+        : null;
+    if (file == null) {
+      return;
+    }
+    try {
+      final bytes = file.bytes;
+      if (bytes == null) {
+        return;
+      }
+      final dot = file.name.lastIndexOf('.');
+      final extension = dot >= 0 ? file.name.substring(dot + 1) : 'jpg';
+      await ref
+          .read(appearanceProvider.notifier)
+          .importBackgroundFromBytes(bytes, extension);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('背景已更新')));
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('设置背景失败：$error')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final appearance = ref.watch(appearanceProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: !_loaded
@@ -163,6 +201,126 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 12),
+                Text('外观与背景', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 12),
+                Text('主题色', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final value in appearanceSeedColors)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => ref
+                            .read(appearanceProvider.notifier)
+                            .update(
+                              appearance.copyWith(seedColorValue: value),
+                            ),
+                        child: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Color(value),
+                            shape: BoxShape.circle,
+                            border: appearance.seedColorValue == value
+                                ? Border.all(
+                                    color: theme.colorScheme.onSurface,
+                                    width: 2.5,
+                                  )
+                                : null,
+                          ),
+                          child: appearance.seedColorValue == value
+                              ? const Icon(
+                                  Icons.check,
+                                  size: 18,
+                                  color: Colors.white,
+                                )
+                              : null,
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text('显示模式', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                SegmentedButton<ThemeMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: ThemeMode.system,
+                      label: Text('跟随系统'),
+                    ),
+                    ButtonSegment(value: ThemeMode.light, label: Text('浅色')),
+                    ButtonSegment(value: ThemeMode.dark, label: Text('深色')),
+                  ],
+                  selected: {appearance.themeMode},
+                  onSelectionChanged: (selection) => ref
+                      .read(appearanceProvider.notifier)
+                      .update(
+                        appearance.copyWith(themeMode: selection.first),
+                      ),
+                ),
+                const SizedBox(height: 16),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.wallpaper_outlined),
+                  title: const Text('自定义背景'),
+                  subtitle: Text(
+                    appearance.hasBackground ? '已设置背景图片' : '未设置',
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (appearance.hasBackground)
+                        IconButton(
+                          tooltip: '移除背景',
+                          onPressed: () => ref
+                              .read(appearanceProvider.notifier)
+                              .clearBackground(),
+                          icon: const Icon(Icons.delete_outline),
+                        ),
+                      TextButton(
+                        onPressed: _pickBackground,
+                        child: const Text('选择图片'),
+                      ),
+                    ],
+                  ),
+                ),
+                if (appearance.hasBackground) ...[
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('半透明遮罩'),
+                    subtitle: const Text('提升文字在背景图上的可读性'),
+                    value: appearance.scrimEnabled,
+                    onChanged: (value) => ref
+                        .read(appearanceProvider.notifier)
+                        .update(appearance.copyWith(scrimEnabled: value)),
+                  ),
+                  if (appearance.scrimEnabled)
+                    Row(
+                      children: [
+                        const Text('遮罩浓度'),
+                        Expanded(
+                          child: Slider(
+                            value: appearance.scrimOpacity.clamp(0.1, 0.85),
+                            min: 0.1,
+                            max: 0.85,
+                            divisions: 15,
+                            label:
+                                '${(appearance.scrimOpacity * 100).round()}%',
+                            onChanged: (value) => ref
+                                .read(appearanceProvider.notifier)
+                                .update(
+                                  appearance.copyWith(scrimOpacity: value),
+                                ),
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+                const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 12),
                 ListTile(

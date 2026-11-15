@@ -37,6 +37,15 @@ class MediaSessionPlugin(
                 result.success(null)
             }
             "getNowPlaying" -> result.success(getNowPlaying())
+            "seekTo" -> {
+                val positionMs = call.argument<Number>("positionMs")?.toLong() ?: 0L
+                try {
+                    activeController()?.transportControls?.seekTo(positionMs)
+                    result.success(null)
+                } catch (_: Exception) {
+                    result.success(null)
+                }
+            }
             else -> result.notImplemented()
         }
     }
@@ -57,16 +66,20 @@ class MediaSessionPlugin(
             return null
         }
         return try {
-            val controllers = manager.getActiveSessions(listenerComponent)
-            val controller = controllers.firstOrNull { controller ->
-                isPlaying(controller) && controller.title() != null
-            } ?: controllers.firstOrNull { it.title() != null } ?: return null
+            val controller = activeController() ?: return null
             buildNowPlaying(controller)
         } catch (_: SecurityException) {
             null
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun activeController(): MediaController? {
+        val controllers = manager.getActiveSessions(listenerComponent)
+        return controllers.firstOrNull { controller ->
+            isPlaying(controller) && controller.title() != null
+        } ?: controllers.firstOrNull { it.title() != null }
     }
 
     private fun isPlaying(controller: MediaController): Boolean {

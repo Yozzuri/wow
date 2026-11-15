@@ -69,4 +69,14 @@ class MediaSessionService {
       return null;
     }
   }
+
+  Future<void> seek(int positionMs) async {
+    try {
+      await _channel.invokeMethod<void>('seekTo', {
+        'positionMs': positionMs,
+      });
+    } on PlatformException {
+      // Ignore: the current session may not support seeking.
+    }
+  }
 }
