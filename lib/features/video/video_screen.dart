@@ -34,7 +34,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   }
 
   Future<void> _pickVideo() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.video);
+    final result = await FilePicker.pickFiles(type: FileType.video);
     final file = (result != null && result.files.isNotEmpty)
         ? result.files.first
         : null;
@@ -72,7 +72,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   }
 
   Future<void> _pickSubtitle() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['srt', 'vtt', 'ass', 'ssa', 'lrc', 'txt'],
       withData: true,
