@@ -1,14 +1,30 @@
+const String _wordRanges =
+    'A-Za-z\\u00C0-\\u024F\\u0370-\\u04FF\\u1E00-\\u1EFF';
+const String _characterRanges =
+    '\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u0E00-\\u0E7F\\u0600-\\u06FF';
+const String _hangulRanges = '\\u1100-\\u11FF\\u3130-\\u318F\\uAC00-\\uD7AF';
+
 final RegExp _tokenPattern = RegExp(
-  r"[A-Za-z]+(?:['’\-][A-Za-z]+)*|[\u4e00-\u9fff]|\d+(?:[.,]\d+)*|[^\sA-Za-z\u4e00-\u9fff\d]+|\s+",
+  "[$_wordRanges]+(?:['’\\-][$_wordRanges]+)*"
+  "|[$_characterRanges]"
+  "|[$_hangulRanges]+"
+  "|\\d+(?:[.,]\\d+)*"
+  "|[^\\s$_wordRanges$_characterRanges$_hangulRanges\\d]+"
+  "|\\s+",
+);
+
+final RegExp _wordPattern = RegExp(
+  "^(?:[$_wordRanges]+(?:['’\\-][$_wordRanges]+)*"
+  "|[$_characterRanges]"
+  "|[$_hangulRanges]+"
+  "|\\d+(?:[.,]\\d+)*)\$",
 );
 
 bool isWordToken(String token) {
   if (token.trim().isEmpty) {
     return false;
   }
-  return RegExp(
-    r"^(?:[A-Za-z]+(?:['’\-][A-Za-z]+)*|[\u4e00-\u9fff]|\d+(?:[.,]\d+)*)$",
-  ).hasMatch(token);
+  return _wordPattern.hasMatch(token);
 }
 
 List<String> tokenizeLine(String text) {

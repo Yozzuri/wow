@@ -24,7 +24,9 @@ class ContentStore {
       ..write('|')
       ..write(document.meta.title)
       ..write('|')
-      ..write(document.meta.source ?? '');
+      ..write(document.meta.source ?? '')
+      ..write('|')
+      ..write(document.meta.language);
     for (final segment in document.segments) {
       buffer
         ..write('|')

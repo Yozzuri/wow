@@ -26,6 +26,18 @@ class ContentMeta {
     language: json['language'] as String? ?? 'en',
     durationMs: json['durationMs'] as int?,
   );
+
+  ContentMeta copyWith({
+    String? title,
+    String? source,
+    String? language,
+    int? durationMs,
+  }) => ContentMeta(
+    title: title ?? this.title,
+    source: source ?? this.source,
+    language: language ?? this.language,
+    durationMs: durationMs ?? this.durationMs,
+  );
 }
 
 class ContentToken {

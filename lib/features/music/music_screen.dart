@@ -12,6 +12,7 @@ import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/library/lyrics_store.dart';
 import '../../core/media/media_session_service.dart';
 import '../../core/models/content_document.dart';
+import '../../core/reading/reading_book.dart';
 import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
 import '../common/interactive_line.dart';
@@ -37,6 +38,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   NowPlaying? _nowPlaying;
   List<LyricsEntry> _entries = const [];
   LyricsEntry? _matched;
+  String _language = 'en';
 
   @override
   void initState() {
@@ -85,6 +87,9 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
       _matched = _nowPlaying == null
           ? null
           : _store.match(_nowPlaying!, entries);
+      if (_matched != null) {
+        _language = _matched!.document.meta.language;
+      }
     });
   }
 
@@ -105,6 +110,9 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
         _matched = nowPlaying == null
             ? null
             : _store.match(nowPlaying, _entries);
+        if (_matched != null) {
+          _language = _matched!.document.meta.language;
+        }
       }
     });
   }
@@ -144,7 +152,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
         meta: ContentMeta(
           title: title,
           source: artist,
-          language: 'en',
+          language: _language,
           durationMs: _nowPlaying?.durationMs,
         ),
         segments: parsed.segments,
@@ -164,6 +172,20 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   Future<void> _deleteEntry(LyricsEntry entry) async {
     await _store.delete(entry);
     await _loadEntries();
+  }
+
+  Future<void> _changeLanguage(String code) async {
+    setState(() => _language = code);
+    final matched = _matched;
+    if (matched == null) {
+      return;
+    }
+    final updated = matched.document.copyWith(
+      meta: matched.document.meta.copyWith(language: code),
+    );
+    await _store.save(updated);
+    await _loadEntries();
+    _showMessage('歌词语言已设为 ${readingLanguageFor(code).label}');
   }
 
   void _showMessage(String message) {
@@ -208,6 +230,26 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
       appBar: AppBar(
         title: const Text('音乐'),
         actions: [
+          PopupMenuButton<String>(
+            tooltip: '歌词语言',
+            initialValue: _language,
+            onSelected: _changeLanguage,
+            itemBuilder: (context) => [
+              for (final item in readingLanguages)
+                PopupMenuItem(value: item.code, child: Text(item.label)),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.translate, size: 20),
+                  const SizedBox(width: 4),
+                  Text(readingLanguageFor(_language).label),
+                ],
+              ),
+            ),
+          ),
           IconButton(
             tooltip: '导入 LRC 歌词',
             onPressed: _importing ? null : _importLyrics,
@@ -397,9 +439,16 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
   @override
   void didUpdateWidget(covariant _ImmersiveLyricsTab oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.matched?.filePath != widget.matched?.filePath) {
+    final pathChanged =
+        oldWidget.matched?.filePath != widget.matched?.filePath;
+    final languageChanged =
+        oldWidget.matched?.document.meta.language !=
+        widget.matched?.document.meta.language;
+    if (pathChanged || languageChanged) {
       _document = widget.matched?.document;
-      _expanded = false;
+      if (pathChanged) {
+        _expanded = false;
+      }
     }
   }
 

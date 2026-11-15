@@ -10,6 +10,7 @@ import 'package:video_player/video_player.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/models/content_document.dart';
+import '../../core/reading/reading_book.dart';
 import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
 import '../../core/vocab/vocab_store.dart';
@@ -33,6 +34,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   bool _analyzing = false;
   bool _notesExpanded = false;
   double _speed = 1.0;
+  String _language = 'en';
 
   @override
   void dispose() {
@@ -106,7 +108,7 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         meta: ContentMeta(
           title: title,
           source: _videoName,
-          language: 'en',
+          language: _language,
           durationMs: _controller?.value.duration.inMilliseconds,
         ),
         segments: parsed.segments,
@@ -345,6 +347,18 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     await _controller?.setPlaybackSpeed(speed);
   }
 
+  void _changeLanguage(String code) {
+    setState(() => _language = code);
+    final document = _document;
+    if (document != null && document.meta.language != code) {
+      setState(
+        () => _document = document.copyWith(
+          meta: document.meta.copyWith(language: code),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
@@ -414,6 +428,8 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                   _SubtitleHeader(
                     title: _subtitleName ?? '字幕',
                     count: _document!.segments.length,
+                    language: _language,
+                    onLanguageChanged: _changeLanguage,
                     analyzing: _analyzing,
                     notesExpanded: _notesExpanded,
                     onToggleNotes: _toggleNotes,
@@ -598,6 +614,8 @@ class _SubtitleHeader extends StatelessWidget {
   const _SubtitleHeader({
     required this.title,
     required this.count,
+    required this.language,
+    required this.onLanguageChanged,
     required this.analyzing,
     required this.notesExpanded,
     required this.onToggleNotes,
@@ -607,6 +625,8 @@ class _SubtitleHeader extends StatelessWidget {
 
   final String title;
   final int count;
+  final String language;
+  final ValueChanged<String> onLanguageChanged;
   final bool analyzing;
   final bool notesExpanded;
   final VoidCallback onToggleNotes;
@@ -631,6 +651,43 @@ class _SubtitleHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  tooltip: '字幕语言',
+                  initialValue: language,
+                  onSelected: onLanguageChanged,
+                  itemBuilder: (context) => [
+                    for (final item in readingLanguages)
+                      PopupMenuItem(
+                        value: item.code,
+                        child: Text(item.label),
+                      ),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.translate,
+                          size: 14,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          readingLanguageFor(language).label,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                        Icon(
+                          Icons.arrow_drop_down,
+                          size: 16,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
