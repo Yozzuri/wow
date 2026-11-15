@@ -10,21 +10,44 @@ import android.media.session.PlaybackState
 import android.os.SystemClock
 import android.provider.Settings
 import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MediaSessionPlugin(
     private val context: Context,
     messenger: BinaryMessenger,
-) : MethodChannel.MethodCallHandler {
+) : MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private val channel = MethodChannel(messenger, CHANNEL)
+    private val eventChannel = EventChannel(messenger, EVENT_CHANNEL)
     private val listenerComponent =
         ComponentName(context, MediaNotificationListenerService::class.java)
     private val manager =
         context.getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
 
+    private var eventSink: EventChannel.EventSink? = null
+    private var boundController: MediaController? = null
+    private var listenerAttached = false
+
+    private val controllerCallback = object : MediaController.Callback() {
+        override fun onMetadataChanged(metadata: MediaMetadata?) = emitNow()
+
+        override fun onPlaybackStateChanged(state: PlaybackState?) = emitNow()
+
+        override fun onSessionDestroyed() {
+            bindController(null)
+        }
+    }
+
+    private val sessionsChangedListener =
+        MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
+            val next = pickController(controllers ?: emptyList())
+            bindController(next)
+        }
+
     init {
         channel.setMethodCallHandler(this)
+        eventChannel.setStreamHandler(this)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -40,13 +63,85 @@ class MediaSessionPlugin(
             "seekTo" -> {
                 val positionMs = call.argument<Number>("positionMs")?.toLong() ?: 0L
                 try {
-                    activeController()?.transportControls?.seekTo(positionMs)
+                    resolveActiveController()?.transportControls?.seekTo(positionMs)
                     result.success(null)
                 } catch (_: Exception) {
                     result.success(null)
                 }
             }
             else -> result.notImplemented()
+        }
+    }
+
+    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+        eventSink = events
+        if (!hasNotificationAccess()) {
+            events?.success(null)
+            return
+        }
+        attachListener()
+        bindController(resolveActiveController())
+    }
+
+    override fun onCancel(arguments: Any?) {
+        eventSink = null
+        detachListener()
+        bindController(null)
+    }
+
+    private fun attachListener() {
+        if (listenerAttached) {
+            return
+        }
+        try {
+            manager.addOnActiveSessionsChangedListener(
+                sessionsChangedListener,
+                listenerComponent,
+            )
+            listenerAttached = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun detachListener() {
+        if (!listenerAttached) {
+            return
+        }
+        try {
+            manager.removeOnActiveSessionsChangedListener(sessionsChangedListener)
+        } catch (_: Exception) {
+        }
+        listenerAttached = false
+    }
+
+    private fun bindController(controller: MediaController?) {
+        if (boundController === controller) {
+            emitNow()
+            return
+        }
+        try {
+            boundController?.unregisterCallback(controllerCallback)
+        } catch (_: Exception) {
+        }
+        boundController = controller
+        try {
+            controller?.registerCallback(controllerCallback)
+        } catch (_: Exception) {
+        }
+        emitNow()
+    }
+
+    private fun emitNow() {
+        val sink = eventSink ?: return
+        val controller = boundController ?: resolveActiveController()
+        if (controller == null) {
+            sink.success(null)
+            return
+        }
+        try {
+            sink.success(buildNowPlaying(controller))
+        } catch (_: Exception) {
+            sink.success(null)
         }
     }
 
@@ -66,7 +161,7 @@ class MediaSessionPlugin(
             return null
         }
         return try {
-            val controller = activeController() ?: return null
+            val controller = resolveActiveController() ?: return null
             buildNowPlaying(controller)
         } catch (_: SecurityException) {
             null
@@ -75,8 +170,15 @@ class MediaSessionPlugin(
         }
     }
 
-    private fun activeController(): MediaController? {
-        val controllers = manager.getActiveSessions(listenerComponent)
+    private fun resolveActiveController(): MediaController? {
+        return try {
+            pickController(manager.getActiveSessions(listenerComponent))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun pickController(controllers: List<MediaController>): MediaController? {
         return controllers.firstOrNull { controller ->
             isPlaying(controller) && controller.title() != null
         } ?: controllers.firstOrNull { it.title() != null }
@@ -116,5 +218,6 @@ class MediaSessionPlugin(
 
     companion object {
         private const val CHANNEL = "langlearn/media_session"
+        private const val EVENT_CHANNEL = "langlearn/media_session/events"
     }
 }

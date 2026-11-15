@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
@@ -15,9 +17,11 @@ import '../../core/models/content_document.dart';
 import '../../core/reading/reading_book.dart';
 import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
+import '../../app/router.dart';
 import '../common/interactive_line.dart';
 import '../common/segment_notes.dart';
 import '../common/word_explanation_sheet.dart';
+import 'lyrics_search_sheet.dart';
 
 class MusicScreen extends ConsumerStatefulWidget {
   const MusicScreen({super.key});
@@ -31,50 +35,161 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   static const _store = LyricsStore();
   static const _service = MediaSessionService();
 
-  Timer? _timer;
+  StreamSubscription<NowPlaying?>? _eventSubscription;
+  Timer? _ticker;
+  Timer? _resyncTimer;
   bool _checkingAccess = true;
   bool _hasAccess = false;
   bool _importing = false;
+  bool _visible = false;
+  bool _foreground = true;
   NowPlaying? _nowPlaying;
   List<LyricsEntry> _entries = const [];
   LyricsEntry? _matched;
   String _language = 'en';
+  final ValueNotifier<int> _position = ValueNotifier<int>(0);
+  final ValueNotifier<int> _duration = ValueNotifier<int>(0);
+
+  static const int _musicTabIndex = 4;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _visible = ref.read(currentTabIndexProvider) == _musicTabIndex;
+    _foreground =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
     _bootstrap();
-    _timer = Timer.periodic(
-      const Duration(milliseconds: 1000),
-      (_) => _poll(),
-    );
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
+    _stopSync();
+    _position.dispose();
+    _duration.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _bootstrap();
+    final foreground = state == AppLifecycleState.resumed;
+    if (foreground == _foreground) {
+      return;
+    }
+    _foreground = foreground;
+    if (foreground) {
+      _startSync();
+    } else {
+      _stopSync();
     }
   }
 
   Future<void> _bootstrap() async {
     final access = await _service.hasAccess();
-    if (mounted) {
-      setState(() {
-        _hasAccess = access;
-        _checkingAccess = false;
-      });
+    if (!mounted) {
+      return;
     }
+    setState(() {
+      _hasAccess = access;
+      _checkingAccess = false;
+    });
     await _loadEntries();
-    await _poll();
+    if (access) {
+      await _startSync();
+    }
+  }
+
+  bool get _canSync => _hasAccess && _visible && _foreground;
+
+  Future<void> _startSync() async {
+    if (!_canSync) {
+      return;
+    }
+    _stopSync();
+    _eventSubscription = _service.events.listen(
+      (nowPlaying) => _applyNowPlaying(nowPlaying),
+      onError: (_) {},
+    );
+    await _syncOnce();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _resyncTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _syncOnce(),
+    );
+  }
+
+  void _stopSync() {
+    _eventSubscription?.cancel();
+    _eventSubscription = null;
+    _ticker?.cancel();
+    _ticker = null;
+    _resyncTimer?.cancel();
+    _resyncTimer = null;
+  }
+
+  Future<void> _syncOnce() async {
+    if (!_canSync) {
+      return;
+    }
+    final nowPlaying = await _service.getNowPlaying();
+    if (!mounted || !_canSync) {
+      return;
+    }
+    _applyNowPlaying(nowPlaying, force: true);
+  }
+
+  void _applyNowPlaying(NowPlaying? nowPlaying, {bool force = false}) {
+    if (!mounted) {
+      return;
+    }
+    final previous = _nowPlaying;
+    final metadataChanged =
+        force ||
+        previous?.title != nowPlaying?.title ||
+        previous?.artist != nowPlaying?.artist ||
+        previous?.album != nowPlaying?.album ||
+        previous?.packageName != nowPlaying?.packageName ||
+        previous?.durationMs != nowPlaying?.durationMs ||
+        previous?.isPlaying != nowPlaying?.isPlaying;
+    _nowPlaying = nowPlaying;
+    if (nowPlaying != null) {
+      _position.value = nowPlaying.positionMs;
+      _duration.value = nowPlaying.durationMs;
+    } else {
+      _position.value = 0;
+      _duration.value = 0;
+    }
+    if (metadataChanged) {
+      final titleChanged =
+          previous?.title != nowPlaying?.title ||
+          previous?.artist != nowPlaying?.artist;
+      if (titleChanged) {
+        _matched = nowPlaying == null
+            ? null
+            : _store.match(nowPlaying, _entries);
+        if (_matched != null) {
+          _language = _matched!.document.meta.language;
+        }
+      }
+      if (_visible) {
+        setState(() {});
+      }
+    }
+  }
+
+  void _tick() {
+    if (!_canSync) {
+      return;
+    }
+    final nowPlaying = _nowPlaying;
+    if (nowPlaying == null || !nowPlaying.isPlaying) {
+      return;
+    }
+    final duration = _duration.value;
+    final next = _position.value + 1000;
+    _position.value = duration > 0 ? min(next, duration) : next;
   }
 
   Future<void> _loadEntries() async {
@@ -93,28 +208,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     });
   }
 
-  Future<void> _poll() async {
-    if (!_hasAccess) {
-      return;
-    }
-    final nowPlaying = await _service.getNowPlaying();
-    if (!mounted) {
-      return;
-    }
-    final changed =
-        nowPlaying?.title != _nowPlaying?.title ||
-        nowPlaying?.artist != _nowPlaying?.artist;
-    setState(() {
-      _nowPlaying = nowPlaying;
-      if (changed) {
-        _matched = nowPlaying == null
-            ? null
-            : _store.match(nowPlaying, _entries);
-        if (_matched != null) {
-          _language = _matched!.document.meta.language;
-        }
-      }
-    });
+  Future<void> _seek(int positionMs) async {
+    _position.value = positionMs;
+    await _service.seek(positionMs);
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    unawaited(_syncOnce());
   }
 
   Future<void> _importLyrics() async {
@@ -199,6 +297,18 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     );
   }
 
+  Future<void> _searchOnline() async {
+    await showLyricsSearchSheet(
+      context,
+      title: _nowPlaying?.title ?? _matched?.title ?? '',
+      artist: _nowPlaying?.artist ?? _matched?.artist ?? '',
+      onImported: () async {
+        await _loadEntries();
+        _showMessage('在线歌词已导入');
+      },
+    );
+  }
+
   void _showMessage(String message) {
     if (!mounted) {
       return;
@@ -237,6 +347,19 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<int>(currentTabIndexProvider, (previous, next) {
+      final visible = next == _musicTabIndex;
+      if (visible == _visible) {
+        return;
+      }
+      _visible = visible;
+      if (visible) {
+        _startSync();
+        setState(() {});
+      } else {
+        _stopSync();
+      }
+    });
     return Scaffold(
       appBar: AppBar(
         title: const Text('音乐'),
@@ -260,6 +383,11 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
                 ],
               ),
             ),
+          ),
+          IconButton(
+            tooltip: '在线搜索歌词（实验性）',
+            onPressed: _searchOnline,
+            icon: const Icon(Icons.travel_explore),
           ),
           IconButton(
             tooltip: '导入 LRC 歌词',
@@ -292,6 +420,8 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
                           builder: (context) => _SongInfoTab(
                             hasAccess: _hasAccess,
                             nowPlaying: _nowPlaying,
+                            position: _position,
+                            duration: _duration,
                             entries: _entries,
                             hasMatch: _matched != null,
                             onOpenSettings: _service.openSettings,
@@ -304,9 +434,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
                         _ImmersiveLyricsTab(
                           matched: _matched,
                           nowPlaying: _nowPlaying,
+                          position: _position,
                           hasAccess: _hasAccess,
                           onWordTap: _showWord,
-                          onSeek: _service.seek,
+                          onSeek: _seek,
                           onImport: _importLyrics,
                           onOpenSettings: _service.openSettings,
                         ),
@@ -324,6 +455,8 @@ class _SongInfoTab extends StatelessWidget {
   const _SongInfoTab({
     required this.hasAccess,
     required this.nowPlaying,
+    required this.position,
+    required this.duration,
     required this.entries,
     required this.hasMatch,
     required this.onOpenSettings,
@@ -334,6 +467,8 @@ class _SongInfoTab extends StatelessWidget {
 
   final bool hasAccess;
   final NowPlaying? nowPlaying;
+  final ValueListenable<int> position;
+  final ValueListenable<int> duration;
   final List<LyricsEntry> entries;
   final bool hasMatch;
   final Future<void> Function() onOpenSettings;
@@ -352,7 +487,11 @@ class _SongInfoTab extends StatelessWidget {
           if (!hasAccess)
             _AccessCard(onOpenSettings: onOpenSettings)
           else
-            _NowPlayingCard(nowPlaying: nowPlaying),
+            _NowPlayingCard(
+              nowPlaying: nowPlaying,
+              position: position,
+              duration: duration,
+            ),
           if (hasMatch) ...[
             const SizedBox(height: 12),
             FilledButton.tonalIcon(
@@ -416,6 +555,7 @@ class _ImmersiveLyricsTab extends ConsumerStatefulWidget {
   const _ImmersiveLyricsTab({
     required this.matched,
     required this.nowPlaying,
+    required this.position,
     required this.hasAccess,
     required this.onWordTap,
     required this.onSeek,
@@ -425,6 +565,7 @@ class _ImmersiveLyricsTab extends ConsumerStatefulWidget {
 
   final LyricsEntry? matched;
   final NowPlaying? nowPlaying;
+  final ValueListenable<int> position;
   final bool hasAccess;
   final void Function(String word, String sentence) onWordTap;
   final Future<void> Function(int positionMs) onSeek;
@@ -440,6 +581,9 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
   ContentDocument? _document;
   bool _expanded = false;
   bool _analyzing = false;
+  int _analysisCompleted = 0;
+  int _analysisTotal = 0;
+  int _analysisFailed = 0;
 
   @override
   void initState() {
@@ -490,11 +634,29 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       _showMessage('请先在「设置」页配置 AI 接口');
       return;
     }
-    setState(() => _analyzing = true);
+    setState(() {
+      _analyzing = true;
+      _analysisCompleted = 0;
+      _analysisTotal = 0;
+      _analysisFailed = 0;
+    });
     try {
       final segments = await const SubtitleAnalyzer().analyze(
         config: config,
         document: document,
+        onBatch: (batch, completed, total, failed) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _analysisCompleted = completed;
+            _analysisTotal = total;
+            _analysisFailed = failed;
+            if (batch.isNotEmpty && _document != null) {
+              _document = applyAnalysis(_document!, batch);
+            }
+          });
+        },
       );
       final enriched = document.copyWith(segments: segments);
       await const ContentStore().saveAnalysis(enriched);
@@ -505,7 +667,11 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
         _document = enriched;
         _expanded = true;
       });
-      _showMessage('AI 解析完成');
+      _showMessage(
+        _analysisFailed > 0
+            ? '解析完成 ${_analysisTotal - _analysisFailed}/$_analysisTotal，失败 $_analysisFailed 块'
+            : 'AI 解析完成',
+      );
     } catch (error) {
       _showMessage('AI 解析失败：$error');
     } finally {
@@ -580,10 +746,13 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       document: _document!,
       title: widget.matched!.title,
       artist: widget.matched!.artist,
-      positionMs: widget.nowPlaying?.positionMs ?? 0,
+      position: widget.position,
       durationMs: widget.nowPlaying?.durationMs ?? 0,
       expanded: _expanded,
       analyzing: _analyzing,
+      analysisCompleted: _analysisCompleted,
+      analysisTotal: _analysisTotal,
+      analysisFailed: _analysisFailed,
       onToggleNotes: _toggleNotes,
       onPhraseTap: _showPhrase,
       onWordTap: widget.onWordTap,
@@ -597,10 +766,13 @@ class _ImmersiveLyrics extends StatefulWidget {
     required this.document,
     required this.title,
     required this.artist,
-    required this.positionMs,
+    required this.position,
     required this.durationMs,
     required this.expanded,
     required this.analyzing,
+    required this.analysisCompleted,
+    required this.analysisTotal,
+    required this.analysisFailed,
     required this.onToggleNotes,
     required this.onPhraseTap,
     required this.onWordTap,
@@ -610,10 +782,13 @@ class _ImmersiveLyrics extends StatefulWidget {
   final ContentDocument document;
   final String title;
   final String artist;
-  final int positionMs;
+  final ValueListenable<int> position;
   final int durationMs;
   final bool expanded;
   final bool analyzing;
+  final int analysisCompleted;
+  final int analysisTotal;
+  final int analysisFailed;
   final VoidCallback onToggleNotes;
   final void Function(ContentPhrase phrase, ContentSegment segment) onPhraseTap;
   final void Function(String word, String sentence) onWordTap;
@@ -626,44 +801,96 @@ class _ImmersiveLyrics extends StatefulWidget {
 class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
   final ItemScrollController _scrollController = ItemScrollController();
   int _activeIndex = -1;
+  bool _following = true;
+  Timer? _resumeTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.position.addListener(_onPositionChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ImmersiveLyrics oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.position != widget.position) {
+      oldWidget.position.removeListener(_onPositionChanged);
+      widget.position.addListener(_onPositionChanged);
+    }
+    if (oldWidget.document != widget.document) {
+      _activeIndex = -1;
+    }
+    _onPositionChanged();
+  }
+
+  @override
+  void dispose() {
+    widget.position.removeListener(_onPositionChanged);
+    _resumeTimer?.cancel();
+    super.dispose();
+  }
 
   int _indexFor(int positionMs) {
     final segment = widget.document.segmentAt(positionMs);
     return segment?.index ?? -1;
   }
 
-  void _scheduleScroll(int index) {
+  void _onPositionChanged() {
+    final index = _indexFor(widget.position.value);
     if (index == _activeIndex) {
       return;
     }
-    _activeIndex = index;
-    if (index < 0) {
-      return;
+    setState(() => _activeIndex = index);
+    if (index >= 0 && _following) {
+      _scrollTo(index);
     }
+  }
+
+  void _scrollTo(int index) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.isAttached) {
         return;
       }
       _scrollController.scrollTo(
         index: index,
-        duration: const Duration(milliseconds: 420),
+        duration: const Duration(milliseconds: 360),
         curve: Curves.easeOutCubic,
         alignment: 0.36,
       );
     });
   }
 
+  void _pauseFollowing() {
+    if (!_following) {
+      return;
+    }
+    setState(() => _following = false);
+    _resumeTimer?.cancel();
+    _resumeTimer = Timer(const Duration(seconds: 8), () {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _following = true);
+      if (_activeIndex >= 0) {
+        _scrollTo(_activeIndex);
+      }
+    });
+  }
+
+  void _resumeFollowing() {
+    _resumeTimer?.cancel();
+    setState(() => _following = true);
+    if (_activeIndex >= 0) {
+      _scrollTo(_activeIndex);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final activeIndex = _indexFor(widget.positionMs);
-    _scheduleScroll(activeIndex);
     final duration = widget.durationMs > 0
         ? widget.durationMs
         : widget.document.meta.durationMs ?? 0;
-    final progress = duration > 0
-        ? (widget.positionMs / duration).clamp(0.0, 1.0)
-        : 0.0;
     return Column(
       children: [
         Padding(
@@ -688,6 +915,14 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       ),
+                    if (widget.analyzing)
+                      Text(
+                        'AI 解析 ${widget.analysisCompleted}/${widget.analysisTotal}'
+                        '${widget.analysisFailed > 0 ? ' · 失败 ${widget.analysisFailed}' : ''}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -705,118 +940,176 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                   tooltip: widget.expanded ? '收起语法与短语' : '展开语法与短语',
                   onPressed: widget.onToggleNotes,
                   icon: Icon(
-                    widget.expanded
-                        ? Icons.unfold_less
-                        : Icons.unfold_more,
+                    widget.expanded ? Icons.unfold_less : Icons.unfold_more,
                   ),
                 ),
             ],
           ),
         ),
         Expanded(
-          child: ShaderMask(
-            blendMode: BlendMode.dstIn,
-            shaderCallback: (rect) => const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.transparent,
-                Colors.black,
-                Colors.black,
-                Colors.transparent,
-              ],
-              stops: [0.0, 0.12, 0.88, 1.0],
-            ).createShader(rect),
-            child: ScrollablePositionedList.builder(
-              itemScrollController: _scrollController,
-              itemCount: widget.document.segments.length,
-              padding: const EdgeInsets.symmetric(vertical: 120),
-              itemBuilder: (context, index) {
-                final segment = widget.document.segments[index];
-                final isActive = index == activeIndex;
-                if (isActive) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        InteractiveLine(
-                          text: segment.text,
-                          translation: segment.translation,
-                          onWordTap: widget.onWordTap,
-                          textAlign: TextAlign.left,
-                          language: widget.document.meta.language,
-                          baseStyle: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontSize: 23,
-                            height: 1.4,
-                            fontWeight: FontWeight.w700,
+          child: Stack(
+            children: [
+              NotificationListener<ScrollNotification>(
+                onNotification: (notification) {
+                  if (notification is ScrollStartNotification &&
+                      notification.dragDetails != null) {
+                    _pauseFollowing();
+                  }
+                  return false;
+                },
+                child: RepaintBoundary(
+                  child: ScrollablePositionedList.builder(
+                    itemScrollController: _scrollController,
+                    itemCount: widget.document.segments.length,
+                    padding: const EdgeInsets.symmetric(vertical: 120),
+                    itemBuilder: (context, index) {
+                      final segment = widget.document.segments[index];
+                      final isActive = index == _activeIndex;
+                      if (isActive) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 10, 24, 10),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              InteractiveLine(
+                                text: segment.text,
+                                translation: segment.translation,
+                                onWordTap: widget.onWordTap,
+                                textAlign: TextAlign.left,
+                                language: widget.document.meta.language,
+                                baseStyle: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontSize: 23,
+                                  height: 1.4,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                wordStyle: TextStyle(
+                                  color: theme.colorScheme.primary,
+                                  fontSize: 23,
+                                  height: 1.4,
+                                  fontWeight: FontWeight.w700,
+                                  decoration: TextDecoration.underline,
+                                  decorationColor: theme.colorScheme.primary,
+                                  decorationStyle: TextDecorationStyle.dotted,
+                                ),
+                                translationStyle: theme.textTheme.bodyMedium
+                                    ?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                              if (widget.expanded) ...[
+                                const SizedBox(height: 8),
+                                SegmentNotes(
+                                  segment: segment,
+                                  onPhraseTap: (phrase) =>
+                                      widget.onPhraseTap(phrase, segment),
+                                ),
+                              ],
+                            ],
                           ),
-                          wordStyle: TextStyle(
-                            color: theme.colorScheme.primary,
-                            fontSize: 23,
-                            height: 1.4,
-                            fontWeight: FontWeight.w700,
-                            decoration: TextDecoration.underline,
-                            decorationColor: theme.colorScheme.primary,
-                            decorationStyle: TextDecorationStyle.dotted,
-                          ),
-                          translationStyle: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
+                        );
+                      }
+                      return InkWell(
+                        onTap: () => widget.onSeek(segment.startMs),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 7, 24, 7),
+                          child: Text(
+                            segment.text.replaceAll('\n', ' '),
+                            textAlign: TextAlign.left,
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant
+                                  .withValues(alpha: 0.55),
+                              height: 1.4,
+                            ),
                           ),
                         ),
-                        if (widget.expanded) ...[
-                          const SizedBox(height: 8),
-                          SegmentNotes(
-                            segment: segment,
-                            onPhraseTap: (phrase) =>
-                                widget.onPhraseTap(phrase, segment),
-                          ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                height: 56,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          theme.colorScheme.surface.withValues(alpha: 0.95),
+                          theme.colorScheme.surface.withValues(alpha: 0),
                         ],
-                      ],
-                    ),
-                  );
-                }
-                return InkWell(
-                  onTap: () => widget.onSeek(segment.startMs),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 7, 24, 7),
-                    child: Text(
-                      segment.text.replaceAll('\n', ' '),
-                      textAlign: TextAlign.left,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.55,
-                        ),
-                        height: 1.4,
                       ),
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
-          child: Row(
-            children: [
-              Text(
-                _formatMs(widget.positionMs),
-                style: theme.textTheme.labelSmall,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 2,
-                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
                 ),
               ),
-              const SizedBox(width: 10),
-              Text(_formatMs(duration), style: theme.textTheme.labelSmall),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                height: 64,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          theme.colorScheme.surface.withValues(alpha: 0),
+                          theme.colorScheme.surface.withValues(alpha: 0.95),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (!_following)
+                Positioned(
+                  right: 16,
+                  bottom: 10,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _resumeFollowing,
+                    icon: const Icon(Icons.my_location, size: 18),
+                    label: const Text('回到当前'),
+                  ),
+                ),
             ],
           ),
+        ),
+        ValueListenableBuilder<int>(
+          valueListenable: widget.position,
+          builder: (context, position, _) {
+            final progress = duration > 0
+                ? (position / duration).clamp(0.0, 1.0)
+                : 0.0;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(24, 4, 24, 16),
+              child: Row(
+                children: [
+                  Text(
+                    _formatMs(position),
+                    style: theme.textTheme.labelSmall,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 2,
+                      backgroundColor:
+                          theme.colorScheme.surfaceContainerHighest,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(_formatMs(duration), style: theme.textTheme.labelSmall),
+                ],
+              ),
+            );
+          },
         ),
       ],
     );
@@ -863,9 +1156,15 @@ class _AccessCard extends StatelessWidget {
 }
 
 class _NowPlayingCard extends StatelessWidget {
-  const _NowPlayingCard({required this.nowPlaying});
+  const _NowPlayingCard({
+    required this.nowPlaying,
+    required this.position,
+    required this.duration,
+  });
 
   final NowPlaying? nowPlaying;
+  final ValueListenable<int> position;
+  final ValueListenable<int> duration;
 
   @override
   Widget build(BuildContext context) {
@@ -888,10 +1187,6 @@ class _NowPlayingCard extends StatelessWidget {
         ),
       );
     }
-    final duration = nowPlaying.durationMs;
-    final progress = duration > 0
-        ? (nowPlaying.positionMs / duration).clamp(0.0, 1.0)
-        : null;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -939,24 +1234,40 @@ class _NowPlayingCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (progress != null) ...[
-              const SizedBox(height: 12),
-              LinearProgressIndicator(value: progress),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Text(
-                    _formatMs(nowPlaying.positionMs),
-                    style: theme.textTheme.labelSmall,
-                  ),
-                  const Spacer(),
-                  Text(
-                    _formatMs(duration),
-                    style: theme.textTheme.labelSmall,
-                  ),
-                ],
-              ),
-            ],
+            ValueListenableBuilder<int>(
+              valueListenable: duration,
+              builder: (context, total, _) {
+                if (total <= 0) {
+                  return const SizedBox.shrink();
+                }
+                return ValueListenableBuilder<int>(
+                  valueListenable: position,
+                  builder: (context, current, _) {
+                    final progress = (current / total).clamp(0.0, 1.0);
+                    return Column(
+                      children: [
+                        const SizedBox(height: 12),
+                        LinearProgressIndicator(value: progress),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Text(
+                              _formatMs(current),
+                              style: theme.textTheme.labelSmall,
+                            ),
+                            const Spacer(),
+                            Text(
+                              _formatMs(total),
+                              style: theme.textTheme.labelSmall,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
+            ),
             if ((nowPlaying.packageName ?? '').isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(

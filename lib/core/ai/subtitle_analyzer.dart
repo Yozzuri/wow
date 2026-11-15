@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:math';
 
 import 'ai_client.dart';
 import 'ai_settings.dart';
+import 'chunk_cache.dart';
 import '../language/languages.dart';
 import '../models/content_document.dart';
 
@@ -23,98 +23,168 @@ class AnalyzedSegment {
 class SubtitleAnalyzer {
   const SubtitleAnalyzer();
 
+  static const _cache = AiChunkCache();
+  static const _promptVersion = 'v3';
+
   Future<List<ContentSegment>> analyze({
     required AiConfig config,
     required ContentDocument document,
     int batchSize = 10,
-    void Function(double progress)? onProgress,
+    int maxChars = 1500,
+    int concurrency = 3,
+    void Function(
+      Map<int, AnalyzedSegment> batch,
+      int completed,
+      int total,
+      int failed,
+    )? onBatch,
   }) async {
+    final chunks = _planChunks(
+      document.segments,
+      maxSegments: batchSize,
+      maxChars: maxChars,
+    );
     final client = AiClient(config);
-    final enriched = <ContentSegment>[];
-    final total = document.segments.length;
-    for (var start = 0; start < total; start += batchSize) {
-      final end = min(start + batchSize, total);
-      final batch = document.segments.sublist(start, end);
-      final analyzed = await _analyzeBatch(
-        client: client,
-        batch: batch,
-        language: document.meta.language,
-      );
-      for (final segment in batch) {
-        final result = analyzed[segment.index];
-        enriched.add(
-          result == null
-              ? segment
-              : segment.copyWith(
-                  translation: result.translation,
-                  tokens: result.tokens.isEmpty
-                      ? segment.tokens
-                      : result.tokens,
-                  grammar: result.grammar.isEmpty
-                      ? segment.grammar
-                      : result.grammar,
-                  phrases: result.phrases.isEmpty
-                      ? segment.phrases
-                      : result.phrases,
-                ),
-        );
+    final language = document.meta.language;
+    final results = <int, Map<int, AnalyzedSegment>>{};
+    var completed = 0;
+    var failed = 0;
+    await runWithConcurrency(chunks, concurrency, (chunk, index) async {
+      try {
+        final analyzed = await _analyzeChunk(client, chunk, language);
+        results[index] = analyzed;
+        completed++;
+        onBatch?.call(analyzed, completed, chunks.length, failed);
+      } catch (_) {
+        failed++;
+        completed++;
+        onBatch?.call(const {}, completed, chunks.length, failed);
       }
-      onProgress?.call(end / total);
+    });
+    if (chunks.isNotEmpty && results.isEmpty) {
+      throw const FormatException('AI 解析失败，请重试或检查接口');
     }
-    return enriched;
+    final byIndex = <int, AnalyzedSegment>{};
+    for (final map in results.values) {
+      byIndex.addAll(map);
+    }
+    return _apply(document, byIndex).segments;
   }
 
-  Future<Map<int, AnalyzedSegment>> _analyzeBatch({
-    required AiClient client,
-    required List<ContentSegment> batch,
-    required String language,
+  ContentDocument _apply(
+    ContentDocument document,
+    Map<int, AnalyzedSegment> analyzed,
+  ) {
+    return document.copyWith(
+      segments: document.segments.map((segment) {
+        final result = analyzed[segment.index];
+        if (result == null) {
+          return segment;
+        }
+        return segment.copyWith(
+          translation: result.translation,
+          tokens: result.tokens.isEmpty ? segment.tokens : result.tokens,
+          grammar: result.grammar.isEmpty ? segment.grammar : result.grammar,
+          phrases: result.phrases.isEmpty ? segment.phrases : result.phrases,
+        );
+      }).toList(),
+    );
+  }
+
+  List<List<ContentSegment>> _planChunks(
+    List<ContentSegment> segments, {
+    required int maxSegments,
+    required int maxChars,
+  }) {
+    final chunks = <List<ContentSegment>>[];
+    var current = <ContentSegment>[];
+    var chars = 0;
+    for (final segment in segments) {
+      final length = segment.text.length;
+      if (current.isNotEmpty &&
+          (current.length >= maxSegments || chars + length > maxChars)) {
+        chunks.add(current);
+        current = <ContentSegment>[];
+        chars = 0;
+      }
+      current.add(segment);
+      chars += length;
+      if (length > maxChars) {
+        chunks.add(current);
+        current = <ContentSegment>[];
+        chars = 0;
+      }
+    }
+    if (current.isNotEmpty) {
+      chunks.add(current);
+    }
+    return chunks;
+  }
+
+  Future<Map<int, AnalyzedSegment>> _analyzeChunk(
+    AiClient client,
+    List<ContentSegment> chunk,
+    String language, {
+    int depth = 0,
   }) async {
+    final payload = jsonEncode(
+      chunk.map((segment) => {'index': segment.index, 'text': segment.text}).toList(),
+    );
+    final cacheKey = _cache.keyFor(
+      'subtitle|$_promptVersion',
+      language,
+      payload,
+    );
+    final cached = await _cache.read(cacheKey);
+    if (cached != null) {
+      try {
+        return parseAnalysisResponse(cached);
+      } catch (_) {
+        // Fall through to a fresh request.
+      }
+    }
     try {
-      final raw = await _requestWithRetry(
-        client: client,
-        batch: batch,
-        language: language,
-      );
+      final raw = await _requestWithRetry(client, chunk, language);
+      await _cache.write(cacheKey, raw);
       return parseAnalysisResponse(raw);
     } on FormatException {
-      if (batch.length <= 1) {
+      if (chunk.length <= 1 || depth >= 2) {
         rethrow;
       }
-      final middle = batch.length ~/ 2;
-      final left = await _analyzeBatch(
-        client: client,
-        batch: batch.sublist(0, middle),
-        language: language,
+      final middle = chunk.length ~/ 2;
+      final merged = <int, AnalyzedSegment>{};
+      await runWithConcurrency(
+        [chunk.sublist(0, middle), chunk.sublist(middle)],
+        2,
+        (part, _) async {
+          merged.addAll(
+            await _analyzeChunk(client, part, language, depth: depth + 1),
+          );
+        },
       );
-      final right = await _analyzeBatch(
-        client: client,
-        batch: batch.sublist(middle),
-        language: language,
-      );
-      return {...left, ...right};
+      return merged;
     }
   }
 
-  Future<String> _requestWithRetry({
-    required AiClient client,
-    required List<ContentSegment> batch,
-    required String language,
-  }) async {
+  Future<String> _requestWithRetry(
+    AiClient client,
+    List<ContentSegment> batch,
+    String language,
+  ) async {
+    Object? lastError;
     for (var attempt = 0; attempt < 2; attempt++) {
-      final raw = await client.chat(
-        messages: _messages(batch, language),
-        maxTokens: 3200,
-      );
       try {
+        final raw = await client.chat(
+          messages: _messages(batch, language),
+          maxTokens: 2600,
+        );
         parseAnalysisResponse(raw);
         return raw;
-      } on FormatException {
-        if (attempt == 1) {
-          rethrow;
-        }
+      } catch (error) {
+        lastError = error;
       }
     }
-    throw FormatException('AI 未返回可解析的 JSON');
+    throw lastError ?? const FormatException('AI 未返回可解析的 JSON');
   }
 
   List<Map<String, String>> _messages(
@@ -149,6 +219,26 @@ class SubtitleAnalyzer {
       {'role': 'user', 'content': jsonEncode(payload)},
     ];
   }
+}
+
+ContentDocument applyAnalysis(
+  ContentDocument document,
+  Map<int, AnalyzedSegment> analyzed,
+) {
+  return document.copyWith(
+    segments: document.segments.map((segment) {
+      final result = analyzed[segment.index];
+      if (result == null) {
+        return segment;
+      }
+      return segment.copyWith(
+        translation: result.translation,
+        tokens: result.tokens.isEmpty ? segment.tokens : result.tokens,
+        grammar: result.grammar.isEmpty ? segment.grammar : result.grammar,
+        phrases: result.phrases.isEmpty ? segment.phrases : result.phrases,
+      );
+    }).toList(),
+  );
 }
 
 Map<int, AnalyzedSegment> parseAnalysisResponse(String raw) {

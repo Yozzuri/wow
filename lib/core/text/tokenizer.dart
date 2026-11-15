@@ -52,6 +52,21 @@ class TextChunk {
   final String? word;
 }
 
+final Map<String, List<TextChunk>> _chunkCache = {};
+
+List<TextChunk> _cachedChunks(String key, List<TextChunk> Function() build) {
+  final cached = _chunkCache[key];
+  if (cached != null) {
+    return cached;
+  }
+  final chunks = build();
+  if (_chunkCache.length > 400) {
+    _chunkCache.remove(_chunkCache.keys.first);
+  }
+  _chunkCache[key] = chunks;
+  return chunks;
+}
+
 /// Splits [text] into display chunks. Japanese uses dictionary-free
 /// wakachigaki word segmentation so a tap selects a whole word instead of a
 /// single character. Space-delimited languages keep the punctuation attached
@@ -60,39 +75,42 @@ List<TextChunk> textChunks(String text, {String language = 'en'}) {
   if (text.isEmpty) {
     return const [];
   }
-  if (language == 'ja') {
-    final chunks = <TextChunk>[];
-    for (final raw in jp.tokenize(text)) {
-      final token = raw;
-      if (token.trim().isEmpty) {
-        continue;
+  final cacheKey = '$language|$text';
+  return _cachedChunks(cacheKey, () {
+    if (language == 'ja') {
+      final chunks = <TextChunk>[];
+      for (final raw in jp.tokenize(text)) {
+        final token = raw;
+        if (token.trim().isEmpty) {
+          continue;
+        }
+        chunks.add(
+          hasWordContent(token)
+              ? TextChunk(token, token.trim())
+              : TextChunk(token, null),
+        );
       }
-      chunks.add(
-        hasWordContent(token)
-            ? TextChunk(token, token.trim())
-            : TextChunk(token, null),
-      );
+      return chunks;
+    }
+    final tokens = tokenizeLine(text);
+    final chunks = <TextChunk>[];
+    var i = 0;
+    while (i < tokens.length) {
+      final token = tokens[i];
+      if (isWordToken(token)) {
+        var chunk = token;
+        var j = i + 1;
+        while (j < tokens.length && !isWordToken(tokens[j])) {
+          chunk += tokens[j];
+          j++;
+        }
+        chunks.add(TextChunk(chunk, token));
+        i = j;
+      } else {
+        chunks.add(TextChunk(token, null));
+        i++;
+      }
     }
     return chunks;
-  }
-  final tokens = tokenizeLine(text);
-  final chunks = <TextChunk>[];
-  var i = 0;
-  while (i < tokens.length) {
-    final token = tokens[i];
-    if (isWordToken(token)) {
-      var chunk = token;
-      var j = i + 1;
-      while (j < tokens.length && !isWordToken(tokens[j])) {
-        chunk += tokens[j];
-        j++;
-      }
-      chunks.add(TextChunk(chunk, token));
-      i = j;
-    } else {
-      chunks.add(TextChunk(token, null));
-      i++;
-    }
-  }
-  return chunks;
+  });
 }

@@ -327,7 +327,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
                   title: const Text('LangLearn'),
-                  subtitle: const Text('版本 0.2.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
+                  subtitle: const Text('版本 0.3.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
                 ),
               ],
             ),

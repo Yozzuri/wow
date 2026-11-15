@@ -22,6 +22,9 @@ class VocabEntry {
     required this.dueAt,
     this.pos,
     this.translation,
+    this.reading,
+    this.inflection,
+    this.lemmaSentence,
     this.language = 'en',
     this.intervalDays = 0,
     this.ease = 2.5,
@@ -33,6 +36,9 @@ class VocabEntry {
   final String word;
   final String lemma;
   final String? pos;
+  final String? reading;
+  final String? inflection;
+  final String? lemmaSentence;
   final String meaning;
   final String sentence;
   final String? translation;
@@ -52,6 +58,9 @@ class VocabEntry {
     'word': word,
     'lemma': lemma,
     'pos': pos,
+    'reading': reading,
+    'inflection': inflection,
+    'lemmaSentence': lemmaSentence,
     'meaning': meaning,
     'sentence': sentence,
     'translation': translation,
@@ -70,6 +79,9 @@ class VocabEntry {
     word: json['word'] as String? ?? '',
     lemma: json['lemma'] as String? ?? '',
     pos: json['pos'] as String?,
+    reading: json['reading'] as String?,
+    inflection: json['inflection'] as String?,
+    lemmaSentence: json['lemmaSentence'] as String?,
     meaning: json['meaning'] as String? ?? '',
     sentence: json['sentence'] as String? ?? '',
     translation: json['translation'] as String?,
@@ -102,6 +114,9 @@ class VocabEntry {
     dueAt: dueAt ?? this.dueAt,
     pos: pos,
     translation: translation,
+    reading: reading,
+    inflection: inflection,
+    lemmaSentence: lemmaSentence,
     language: language,
     intervalDays: intervalDays ?? this.intervalDays,
     ease: ease ?? this.ease,
@@ -158,6 +173,9 @@ class VocabStore {
     String? meaning,
     required String sentence,
     String? translation,
+    String? reading,
+    String? inflection,
+    String? lemmaSentence,
     required String sourceTitle,
     String language = 'en',
   }) async {
@@ -180,6 +198,9 @@ class VocabStore {
         meaning: meaning ?? '',
         sentence: sentence,
         translation: translation,
+        reading: reading,
+        inflection: inflection,
+        lemmaSentence: lemmaSentence,
         sourceTitle: sourceTitle,
         language: language,
         createdAt: now,

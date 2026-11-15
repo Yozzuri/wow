@@ -33,6 +33,9 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   String? _subtitleName;
   bool _busy = false;
   bool _analyzing = false;
+  int _analysisCompleted = 0;
+  int _analysisTotal = 0;
+  int _analysisFailed = 0;
   bool _notesExpanded = false;
   double _speed = 1.0;
   String _language = 'en';
@@ -286,58 +289,47 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     if (!mounted) {
       return;
     }
-    final progress = ValueNotifier<double>(0);
-    var dialogShown = false;
-    setState(() => _analyzing = true);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('AI 解析字幕'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('正在生成翻译、词汇与语法注释…'),
-            const SizedBox(height: 12),
-            ValueListenableBuilder<double>(
-              valueListenable: progress,
-              builder: (context, value, _) =>
-                  LinearProgressIndicator(value: value == 0 ? null : value),
-            ),
-          ],
-        ),
-      ),
-    );
-    dialogShown = true;
+    setState(() {
+      _analyzing = true;
+      _analysisCompleted = 0;
+      _analysisTotal = 0;
+      _analysisFailed = 0;
+    });
     try {
       final segments = await const SubtitleAnalyzer().analyze(
         config: config,
         document: document,
-        onProgress: (value) => progress.value = value,
+        onBatch: (batch, completed, total, failed) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _analysisCompleted = completed;
+            _analysisTotal = total;
+            _analysisFailed = failed;
+            if (batch.isNotEmpty && _document != null) {
+              _document = applyAnalysis(_document!, batch);
+            }
+          });
+        },
       );
       final enriched = document.copyWith(segments: segments);
       await const ContentStore().saveAnalysis(enriched);
       if (!mounted) {
         return;
       }
-      setState(() => _document = enriched);
-      if (dialogShown) {
-        Navigator.of(context, rootNavigator: true).pop();
-        dialogShown = false;
-      }
-      _showMessage('解析完成，已保存 JSON 缓存');
+      setState(() {
+        _document = enriched;
+        _notesExpanded = true;
+      });
+      _showMessage(
+        _analysisFailed > 0
+            ? '解析完成 ${_analysisTotal - _analysisFailed}/$_analysisTotal，失败 $_analysisFailed 块'
+            : '解析完成，已保存 JSON 缓存',
+      );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      if (dialogShown) {
-        Navigator.of(context, rootNavigator: true).pop();
-        dialogShown = false;
-      }
       _showMessage('解析失败：$error');
     } finally {
-      progress.dispose();
       if (mounted) {
         setState(() => _analyzing = false);
       }
@@ -461,6 +453,9 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                     language: _language,
                     onLanguageChanged: _changeLanguage,
                     analyzing: _analyzing,
+                    analysisCompleted: _analysisCompleted,
+                    analysisTotal: _analysisTotal,
+                    analysisFailed: _analysisFailed,
                     notesExpanded: _notesExpanded,
                     onToggleNotes: _toggleNotes,
                     onAnalyze: _analyzeSubtitle,
@@ -647,6 +642,9 @@ class _SubtitleHeader extends StatelessWidget {
     required this.language,
     required this.onLanguageChanged,
     required this.analyzing,
+    required this.analysisCompleted,
+    required this.analysisTotal,
+    required this.analysisFailed,
     required this.notesExpanded,
     required this.onToggleNotes,
     required this.onAnalyze,
@@ -658,6 +656,9 @@ class _SubtitleHeader extends StatelessWidget {
   final String language;
   final ValueChanged<String> onLanguageChanged;
   final bool analyzing;
+  final int analysisCompleted;
+  final int analysisTotal;
+  final int analysisFailed;
   final bool notesExpanded;
   final VoidCallback onToggleNotes;
   final VoidCallback onAnalyze;
@@ -683,6 +684,14 @@ class _SubtitleHeader extends StatelessWidget {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (analyzing)
+                  Text(
+                    'AI 解析 $analysisCompleted/$analysisTotal'
+                    '${analysisFailed > 0 ? ' · 失败 $analysisFailed' : ''}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
                 PopupMenuButton<String>(
                   tooltip: '字幕语言',
                   initialValue: language,

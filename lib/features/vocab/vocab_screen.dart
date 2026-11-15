@@ -115,6 +115,40 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
     await _load();
   }
 
+  Future<void> _studyWordbook(Wordbook book) async {
+    final store = ref.read(vocabStoreProvider);
+    var added = 0;
+    for (final entry in book.entries) {
+      final inserted = await store.addToken(
+        word: entry.word,
+        lemma: entry.word,
+        pos: entry.pos,
+        meaning: entry.meaning.isEmpty ? entry.usage : entry.meaning,
+        sentence: entry.example.isNotEmpty ? entry.example : entry.usage,
+        reading: entry.reading,
+        inflection: entry.pitchAccent == null
+            ? null
+            : '音调：${entry.pitchAccent}',
+        language: book.language,
+        sourceTitle: book.name,
+      );
+      if (inserted) {
+        added++;
+      }
+    }
+    if (added > 0) {
+      ref.read(vocabVersionProvider.notifier).state++;
+      await _load();
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(added > 0 ? '已加入学习队列：$added 个词条' : '词条已存在学习队列中'),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<int>(vocabVersionProvider, (previous, next) => _load());
@@ -169,6 +203,7 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
               onOpenImport: _openImport,
               onImportJson: _importJsonWordbook,
               onDelete: _deleteWordbook,
+              onStudy: _studyWordbook,
             ),
           ],
         ),
@@ -428,12 +463,14 @@ class _ImportTab extends StatelessWidget {
     required this.onOpenImport,
     required this.onImportJson,
     required this.onDelete,
+    required this.onStudy,
   });
 
   final List<Wordbook> wordbooks;
   final VoidCallback onOpenImport;
   final VoidCallback onImportJson;
   final void Function(Wordbook book) onDelete;
+  final void Function(Wordbook book) onStudy;
 
   @override
   Widget build(BuildContext context) {
@@ -476,10 +513,20 @@ class _ImportTab extends StatelessWidget {
               subtitle: Text(
                 '${book.language} · ${book.entries.length} 个词条',
               ),
-              trailing: IconButton(
-                tooltip: '删除',
-                onPressed: () => onDelete(book),
-                icon: const Icon(Icons.delete_outline),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: '加入学习',
+                    onPressed: () => onStudy(book),
+                    icon: const Icon(Icons.school_outlined),
+                  ),
+                  IconButton(
+                    tooltip: '删除',
+                    onPressed: () => onDelete(book),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
               ),
             ),
           ),

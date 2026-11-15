@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
+import '../../core/ai/word_analysis.dart';
 import '../../core/models/content_document.dart';
 import '../../core/vocab/vocab_store.dart';
 import 'ai_markdown.dart';
@@ -29,55 +29,74 @@ class WordExplanationSheet extends ConsumerStatefulWidget {
 }
 
 class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
-  String? _result;
+  WordAnalysis? _analysis;
   String? _error;
-  late bool _loading;
+  bool _loading = true;
+  int _requestId = 0;
 
   ContentToken? get _token => widget.token;
 
-  bool get _hasLocalMeaning => (_token?.meaning ?? '').trim().isNotEmpty;
+  WordAnalysis _localFallback() {
+    final hint = (_token?.lemma ?? '').trim();
+    final lemma = hint.isEmpty ? widget.word : hint;
+    final changed = lemma != widget.word;
+    return WordAnalysis(
+      surface: widget.word,
+      lemma: lemma,
+      reading: null,
+      pos: _token?.pos,
+      inflectionChanged: changed,
+      inflectionSummary: changed ? '${widget.word} → $lemma' : '',
+      inflectionExplanation: '',
+      lemmaSentence: changed
+          ? widget.sentence.replaceFirst(widget.word, lemma)
+          : widget.sentence,
+      meaning: _token?.meaning ?? '',
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _loading = !_hasLocalMeaning;
-    if (!_hasLocalMeaning) {
-      _explain();
-    }
+    _load();
   }
 
-  Future<void> _explain() async {
-    if (mounted) {
-      setState(() {
-        _loading = true;
-        _error = null;
-      });
-    }
+  Future<void> _load({bool force = false}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final requestId = ++_requestId;
     try {
       final config = await ref.read(aiConfigProvider.future);
       if (!config.isConfigured) {
-        if (mounted) {
+        if (mounted && requestId == _requestId) {
           setState(() {
-            _error = '尚未配置 AI 接口，请到「设置」页填写 Base URL、模型和 API Key。';
+            _analysis = _localFallback();
+            _error = '尚未配置 AI 接口，显示本地词典信息。';
             _loading = false;
           });
         }
         return;
       }
-      final result = await AiClient(config).explainWord(
+      final result = await const WordAnalyzer().analyze(
+        config: config,
         word: widget.word,
         sentence: widget.sentence,
         language: widget.language,
+        lemmaHint: _token?.lemma,
+        force: force,
       );
-      if (mounted) {
+      if (mounted && requestId == _requestId) {
         setState(() {
-          _result = result;
+          _analysis = result;
           _loading = false;
         });
       }
     } catch (error) {
-      if (mounted) {
+      if (mounted && requestId == _requestId) {
         setState(() {
+          _analysis = _localFallback();
           _error = '$error';
           _loading = false;
         });
@@ -86,15 +105,22 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
   }
 
   Future<void> _addToVocab() async {
-    final token = _token;
+    final analysis = _analysis ?? _localFallback();
     final added = await ref
         .read(vocabStoreProvider)
         .addToken(
-          word: token?.surface ?? widget.word,
-          lemma: token?.lemma,
-          pos: token?.pos,
-          meaning: token?.meaning,
+          word: analysis.surface,
+          lemma: analysis.lemma,
+          pos: analysis.pos,
+          meaning: analysis.meaning.isNotEmpty
+              ? analysis.meaning
+              : _token?.meaning,
           sentence: widget.sentence,
+          reading: analysis.reading,
+          inflection: analysis.inflectionChanged
+              ? analysis.inflectionMarkdown
+              : null,
+          lemmaSentence: analysis.lemmaSentence,
           language: widget.language,
           sourceTitle: widget.sourceTitle ?? '',
         );
@@ -112,7 +138,9 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final token = _token;
+    final analysis = _analysis;
+    final sentence = analysis?.lemmaSentence ?? widget.sentence;
+    final examples = analysis?.examples ?? const <String>[];
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -134,46 +162,41 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                       style: theme.textTheme.headlineSmall,
                     ),
                   ),
-                  if ((token?.pos ?? '').isNotEmpty)
+                  if ((analysis?.pos ?? _token?.pos ?? '').isNotEmpty)
                     Chip(
-                      label: Text(token!.pos!),
+                      label: Text((analysis?.pos ?? _token?.pos)!),
                       visualDensity: VisualDensity.compact,
                     ),
+                  IconButton(
+                    tooltip: '重新生成并缓存',
+                    onPressed: _loading ? null : () => _load(force: true),
+                    icon: const Icon(Icons.refresh),
+                  ),
                 ],
               ),
-              if ((token?.lemma ?? '').isNotEmpty &&
-                  token!.lemma != widget.word.toLowerCase())
+              if (analysis != null) ...[
                 Text(
-                  '原形：${token.lemma}',
+                  '原型：${analysis.lemma}'
+                  '${(analysis.reading ?? '').isEmpty ? '' : ' / ${analysis.reading}'}',
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  sentence,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-              const SizedBox(height: 4),
-              Text(
-                widget.sentence,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              ] else
+                Text(
+                  widget.sentence,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
               const SizedBox(height: 16),
-              if (_hasLocalMeaning) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    token!.meaning!,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSecondaryContainer,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
               if (_loading)
                 const Row(
                   children: [
@@ -186,23 +209,79 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                     Text('AI 解析中…'),
                   ],
                 )
-              else if (_error != null)
-                Text(
-                  _error!,
-                  style: TextStyle(color: theme.colorScheme.error),
-                )
-              else if (_result != null)
-                AiMarkdown(data: _result!),
+              else ...[
+                if (analysis != null &&
+                    analysis.inflectionChanged &&
+                    analysis.inflectionMarkdown.isNotEmpty) ...[
+                  AiMarkdown(data: analysis.inflectionMarkdown),
+                  const SizedBox(height: 12),
+                ],
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: theme.colorScheme.error),
+                    ),
+                  ),
+                if ((analysis?.usage ?? '').isNotEmpty) ...[
+                  Text('原型用法', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  AiMarkdown(data: analysis!.usage),
+                  const SizedBox(height: 12),
+                ],
+                if ((analysis?.meaning ?? '').isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      analysis!.meaning,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else if (_token?.meaning != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _token!.meaning!,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if ((analysis?.detailMarkdown ?? '').isNotEmpty)
+                  AiMarkdown(data: analysis!.detailMarkdown),
+                if (examples.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  AiMarkdown(
+                    data: examples.map((example) => '- $example').join('\n'),
+                  ),
+                ],
+              ],
               const SizedBox(height: 16),
               Row(
                 children: [
-                  if (_result == null && !_loading)
+                  if (_error != null && !_loading)
                     TextButton.icon(
-                      onPressed: _explain,
+                      onPressed: _load,
                       icon: const Icon(Icons.auto_awesome),
                       label: const Text('AI 详解'),
                     ),
-                  if (token != null && _hasLocalMeaning)
+                  if (analysis != null)
                     FilledButton.tonalIcon(
                       onPressed: _addToVocab,
                       icon: const Icon(Icons.add),

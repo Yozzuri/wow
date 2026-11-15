@@ -38,6 +38,15 @@ class MediaSessionService {
   static const MethodChannel _channel = MethodChannel(
     'langlearn/media_session',
   );
+  static const EventChannel _eventChannel = EventChannel(
+    'langlearn/media_session/events',
+  );
+
+  Stream<NowPlaying?> get events => _eventChannel
+      .receiveBroadcastStream()
+      .map((event) => event == null ? null : NowPlaying.fromMap(
+            (event as Map).cast<Object?, Object?>(),
+          ));
 
   Future<bool> hasAccess() async {
     try {
