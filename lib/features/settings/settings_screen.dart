@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/appearance/appearance_settings.dart';
+import '../../core/vocab/learning_plan.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -125,6 +126,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final appearance = ref.watch(appearanceProvider);
+    final plan = ref.watch(learningPlanProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: !_loaded
@@ -201,6 +203,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 32),
+                const Divider(),
+                const SizedBox(height: 12),
+                Text('学习计划', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  '每日新学与复习数量会用于生成今天的词汇任务，超出部分留到以后。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _PlanSlider(
+                  label: '每日新学',
+                  unit: '个',
+                  value: plan.newPerDay,
+                  max: 50,
+                  step: 5,
+                  onChanged: (value) => ref
+                      .read(learningPlanProvider.notifier)
+                      .update(plan.copyWith(newPerDay: value)),
+                ),
+                _PlanSlider(
+                  label: '每日复习',
+                  unit: '个',
+                  value: plan.reviewPerDay,
+                  max: 300,
+                  step: 10,
+                  onChanged: (value) => ref
+                      .read(learningPlanProvider.notifier)
+                      .update(plan.copyWith(reviewPerDay: value)),
+                ),
+                const SizedBox(height: 24),
                 const Divider(),
                 const SizedBox(height: 12),
                 Text('外观与背景', style: theme.textTheme.titleMedium),
@@ -327,10 +361,59 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
                   title: const Text('LangLearn'),
-                  subtitle: const Text('版本 0.3.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
+                  subtitle: const Text('版本 0.4.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
                 ),
               ],
             ),
+    );
+  }
+}
+
+class _PlanSlider extends StatelessWidget {
+  const _PlanSlider({
+    required this.label,
+    required this.unit,
+    required this.value,
+    required this.max,
+    required this.step,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String unit;
+  final int value;
+  final int max;
+  final int step;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label, style: theme.textTheme.labelLarge),
+            ),
+            Text(
+              '$value $unit',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: theme.colorScheme.primary,
+              ),
+            ),
+          ],
+        ),
+        Slider(
+          value: value.clamp(0, max).toDouble(),
+          min: 0,
+          max: max.toDouble(),
+          divisions: max ~/ step,
+          label: '$value$unit',
+          onChanged: (raw) => onChanged((raw / step).round() * step),
+        ),
+      ],
     );
   }
 }

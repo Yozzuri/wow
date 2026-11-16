@@ -10,6 +10,30 @@ import '../text/normalize.dart';
 
 enum ReviewGrade { forgot, hard, good, easy }
 
+/// Ebbinghaus-style review ladder used for learned words.
+const List<int> ebbinghausIntervals = [1, 2, 4, 7, 15, 30, 60, 120, 240, 365];
+
+/// Returns the interval and the new stage after grading a review.
+({int stage, int intervalDays}) ebbinghausSchedule(
+  int stage,
+  ReviewGrade grade,
+) {
+  final last = ebbinghausIntervals.length - 1;
+  switch (grade) {
+    case ReviewGrade.forgot:
+      return (stage: 0, intervalDays: ebbinghausIntervals.first);
+    case ReviewGrade.hard:
+      final next = (stage - 1).clamp(0, last);
+      return (stage: next, intervalDays: ebbinghausIntervals[next]);
+    case ReviewGrade.good:
+      final next = (stage + 1).clamp(0, last);
+      return (stage: next, intervalDays: ebbinghausIntervals[stage]);
+    case ReviewGrade.easy:
+      final next = (stage + 2).clamp(0, last);
+      return (stage: next, intervalDays: ebbinghausIntervals[next]);
+  }
+}
+
 class VocabEntry {
   const VocabEntry({
     required this.key,
@@ -30,6 +54,9 @@ class VocabEntry {
     this.ease = 2.5,
     this.reps = 0,
     this.lapses = 0,
+    this.learned = false,
+    this.learnedAt,
+    this.lastReviewedAt,
   });
 
   final String key;
@@ -50,7 +77,11 @@ class VocabEntry {
   final double ease;
   final int reps;
   final int lapses;
+  final bool learned;
+  final DateTime? learnedAt;
+  final DateTime? lastReviewedAt;
 
+  bool get isNew => !learned;
   bool get isDue => !dueAt.isAfter(DateTime.now());
 
   Map<String, dynamic> toJson() => {
@@ -72,6 +103,10 @@ class VocabEntry {
     'ease': ease,
     'reps': reps,
     'lapses': lapses,
+    'learned': learned,
+    if (learnedAt != null) 'learnedAt': learnedAt!.toIso8601String(),
+    if (lastReviewedAt != null)
+      'lastReviewedAt': lastReviewedAt!.toIso8601String(),
   };
 
   factory VocabEntry.fromJson(Map<String, dynamic> json) => VocabEntry(
@@ -88,13 +123,18 @@ class VocabEntry {
     sourceTitle: json['sourceTitle'] as String? ?? '',
     language: json['language'] as String? ?? 'en',
     createdAt:
-        DateTime.tryParse(json['createdAt'] as String? ?? '') ??
-        DateTime.now(),
+        DateTime.tryParse(json['createdAt'] as String? ?? '') ?? DateTime.now(),
     dueAt: DateTime.tryParse(json['dueAt'] as String? ?? '') ?? DateTime.now(),
     intervalDays: json['intervalDays'] as int? ?? 0,
     ease: (json['ease'] as num?)?.toDouble() ?? 2.5,
     reps: json['reps'] as int? ?? 0,
     lapses: json['lapses'] as int? ?? 0,
+    learned:
+        json['learned'] as bool? ??
+        ((json['reps'] as int? ?? 0) > 0 ||
+            (json['intervalDays'] as int? ?? 0) > 0),
+    learnedAt: DateTime.tryParse(json['learnedAt'] as String? ?? ''),
+    lastReviewedAt: DateTime.tryParse(json['lastReviewedAt'] as String? ?? ''),
   );
 
   VocabEntry copyWith({
@@ -103,6 +143,9 @@ class VocabEntry {
     double? ease,
     int? reps,
     int? lapses,
+    bool? learned,
+    DateTime? learnedAt,
+    DateTime? lastReviewedAt,
   }) => VocabEntry(
     key: key,
     word: word,
@@ -122,6 +165,9 @@ class VocabEntry {
     ease: ease ?? this.ease,
     reps: reps ?? this.reps,
     lapses: lapses ?? this.lapses,
+    learned: learned ?? this.learned,
+    learnedAt: learnedAt ?? this.learnedAt,
+    lastReviewedAt: lastReviewedAt ?? this.lastReviewedAt,
   );
 }
 
@@ -163,8 +209,9 @@ class VocabStore {
     );
   }
 
-  String _keyFor(String lemma, String language) =>
-      sha1.convert(utf8.encode('${normalizeForMatch(lemma)}|$language')).toString();
+  String _keyFor(String lemma, String language) => sha1
+      .convert(utf8.encode('${normalizeForMatch(lemma)}|$language'))
+      .toString();
 
   Future<bool> addToken({
     required String word,
@@ -251,48 +298,50 @@ class VocabStore {
     return added;
   }
 
-  Future<List<VocabEntry>> review(
-    VocabEntry entry,
-    ReviewGrade grade,
-  ) async {
+  /// Marks a new word as learned. It becomes due immediately so it joins
+  /// today's review queue.
+  Future<VocabEntry?> markLearned(VocabEntry entry) async {
+    final entries = await load();
+    final index = entries.indexWhere((item) => item.key == entry.key);
+    if (index < 0) {
+      return null;
+    }
+    final now = DateTime.now();
+    final updated = entry.copyWith(
+      learned: true,
+      learnedAt: now,
+      dueAt: now,
+      intervalDays: 0,
+      reps: 0,
+    );
+    entries[index] = updated;
+    await _save(entries);
+    return updated;
+  }
+
+  Future<void> remove(VocabEntry entry) async {
+    final entries = await load();
+    entries.removeWhere((item) => item.key == entry.key);
+    await _save(entries);
+  }
+
+  Future<List<VocabEntry>> review(VocabEntry entry, ReviewGrade grade) async {
     final entries = await load();
     final index = entries.indexWhere((item) => item.key == entry.key);
     if (index < 0) {
       return entries;
     }
-    var ease = entry.ease;
-    var interval = entry.intervalDays;
-    var reps = entry.reps;
-    var lapses = entry.lapses;
-    if (grade == ReviewGrade.forgot) {
-      reps = 0;
-      interval = 1;
-      lapses += 1;
-      ease = (ease - 0.2).clamp(1.3, 2.8).toDouble();
-    } else {
-      final quality = switch (grade) {
-        ReviewGrade.hard => 3,
-        ReviewGrade.good => 4,
-        _ => 5,
-      };
-      if (reps == 0) {
-        interval = 1;
-      } else if (reps == 1) {
-        interval = 6;
-      } else {
-        interval = (interval * ease).round().clamp(1, 3650);
-      }
-      ease = (ease + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)))
-          .clamp(1.3, 2.8)
-          .toDouble();
-      reps += 1;
-    }
+    final schedule = ebbinghausSchedule(entry.reps, grade);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     final updated = entry.copyWith(
-      ease: ease,
-      intervalDays: interval,
-      reps: reps,
-      lapses: lapses,
-      dueAt: DateTime.now().add(Duration(days: interval)),
+      learned: true,
+      learnedAt: entry.learnedAt ?? now,
+      lastReviewedAt: now,
+      intervalDays: schedule.intervalDays,
+      reps: schedule.stage,
+      lapses: grade == ReviewGrade.forgot ? entry.lapses + 1 : entry.lapses,
+      dueAt: today.add(Duration(days: schedule.intervalDays)),
     );
     entries[index] = updated;
     await _save(entries);

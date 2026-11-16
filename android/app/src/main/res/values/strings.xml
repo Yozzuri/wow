@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="checkin_widget_description">显示 LangLearn 连续打卡天数</string>
+</resources>

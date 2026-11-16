@@ -4,7 +4,11 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../core/vocab/checkin_store.dart';
+import '../../core/vocab/daily_tasks.dart';
+import '../../core/vocab/learning_plan.dart';
 import '../../core/vocab/vocab_store.dart';
 import '../../core/vocab/wordbook.dart';
 import 'learn_session_page.dart';
@@ -44,28 +48,39 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
     });
   }
 
-  Future<void> _review(VocabEntry entry) async {
-    final rated = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => _ReviewSheetBody(entry: entry),
-    );
-    if (rated == true) {
-      await _load();
-    }
-  }
-
-  Future<void> _startLearning(List<VocabEntry> queue) async {
-    if (queue.isEmpty) {
+  Future<void> _startDaily(DailyTasks tasks) async {
+    if (tasks.total == 0) {
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => LearnSessionPage(entries: queue),
+        builder: (context) => LearnSessionPage(
+          newEntries: tasks.newWords,
+          reviewEntries: tasks.reviewWords,
+          pool: _entries,
+        ),
       ),
     );
+    await ref.read(checkinProvider.notifier).refresh();
     await _load();
+  }
+
+  Future<void> _reviewSingle(VocabEntry entry) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => LearnSessionPage(
+          newEntries: entry.isNew ? [entry] : const [],
+          reviewEntries: entry.isNew ? const [] : [entry],
+          pool: _entries,
+        ),
+      ),
+    );
+    await ref.read(checkinProvider.notifier).refresh();
+    await _load();
+  }
+
+  Future<void> _checkIn() async {
+    await ref.read(checkinProvider.notifier).checkIn();
   }
 
   Future<void> _openImport() async {
@@ -97,15 +112,13 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
       await _wordbookStore.save(book);
       await _load();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已导入词书：${book.name}')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('已导入词书：${book.name}')));
       }
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('词书导入失败：$error')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('词书导入失败：$error')));
       }
     }
   }
@@ -152,16 +165,12 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
   @override
   Widget build(BuildContext context) {
     ref.listen<int>(vocabVersionProvider, (previous, next) => _load());
+    final plan = ref.watch(learningPlanProvider);
+    final checkin = ref.watch(checkinProvider);
+    final tasks = buildDailyTasks(_entries, plan);
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    final dueReview = _entries
-        .where((entry) => entry.reps > 0 && entry.isDue)
-        .toList();
-    final newEntries = _entries.where((entry) => entry.reps == 0).toList();
-    final queue = [...dueReview, ...newEntries];
     return DefaultTabController(
       length: 3,
       child: Scaffold(
@@ -185,18 +194,19 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
         body: TabBarView(
           children: [
             _LearnTab(
-              dueCount: dueReview.length,
-              newCount: newEntries.length,
+              tasks: tasks,
               totalCount: _entries.length,
-              onStart: () => _startLearning(queue),
+              streak: checkin.streak,
+              checkedInToday: checkin.checkedInToday,
+              onStart: () => _startDaily(tasks),
+              onCheckIn: _checkIn,
+              onOpenPlan: () => context.go('/settings'),
             ),
             _WordbookTab(
               entries: _entries,
-              onReview: _review,
+              onReview: _reviewSingle,
               onRefresh: _load,
-              onStart: () => _startLearning(
-                _entries.where((entry) => entry.isDue).toList(),
-              ),
+              onStart: () => _startDaily(tasks),
             ),
             _ImportTab(
               wordbooks: _wordbooks,
@@ -214,21 +224,28 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
 
 class _LearnTab extends StatelessWidget {
   const _LearnTab({
-    required this.dueCount,
-    required this.newCount,
+    required this.tasks,
     required this.totalCount,
+    required this.streak,
+    required this.checkedInToday,
     required this.onStart,
+    required this.onCheckIn,
+    required this.onOpenPlan,
   });
 
-  final int dueCount;
-  final int newCount;
+  final DailyTasks tasks;
   final int totalCount;
+  final int streak;
+  final bool checkedInToday;
   final VoidCallback onStart;
+  final VoidCallback onCheckIn;
+  final VoidCallback onOpenPlan;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final hasQueue = dueCount + newCount > 0;
+    final plan = tasks.plan;
+    final hasQueue = tasks.total > 0;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -245,7 +262,37 @@ class _LearnTab extends StatelessWidget {
                       color: theme.colorScheme.primary,
                     ),
                     const SizedBox(width: 8),
-                    Text('今日学习', style: theme.textTheme.titleMedium),
+                    Expanded(
+                      child: Text('今日学习', style: theme.textTheme.titleMedium),
+                    ),
+                    if (streak > 0 || checkedInToday)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.tertiaryContainer,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.local_fire_department,
+                              size: 16,
+                              color: theme.colorScheme.onTertiaryContainer,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '连续 $streak 天',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: theme.colorScheme.onTertiaryContainer,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 20),
@@ -253,19 +300,27 @@ class _LearnTab extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _CountTile(
-                        value: dueCount,
-                        label: '需复习',
-                        color: theme.colorScheme.primary,
+                        value: tasks.newWords.length,
+                        label: '待新学',
+                        color: theme.colorScheme.tertiary,
                       ),
                     ),
                     Expanded(
                       child: _CountTile(
-                        value: newCount,
-                        label: '需新学',
-                        color: theme.colorScheme.tertiary,
+                        value: tasks.reviewWords.length,
+                        label: '待复习',
+                        color: theme.colorScheme.primary,
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  '今日已学 ${tasks.newDoneToday}/${plan.newPerDay} · '
+                  '已复习 ${tasks.reviewDoneToday}/${plan.reviewPerDay}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 const SizedBox(height: 20),
                 SizedBox(
@@ -273,16 +328,59 @@ class _LearnTab extends StatelessWidget {
                   child: FilledButton.icon(
                     onPressed: hasQueue ? onStart : null,
                     icon: const Icon(Icons.play_arrow),
-                    label: Text(hasQueue ? '开始学习' : '今天没有需要学习的词'),
+                    label: Text(hasQueue ? '开始今日任务' : '今日任务已完成'),
                   ),
                 ),
+                if (!hasQueue && totalCount > 0 && !checkedInToday) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: onCheckIn,
+                      icon: const Icon(Icons.local_fire_department),
+                      label: const Text('完成打卡'),
+                    ),
+                  ),
+                ],
+                if (checkedInToday) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.check_circle,
+                        size: 18,
+                        color: theme.colorScheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '今日已打卡',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
         ),
         const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.tune),
+            title: const Text('学习计划'),
+            subtitle: Text(
+              '每日新学 ${plan.newPerDay} 个 · 每日复习 ${plan.reviewPerDay} 个',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onOpenPlan,
+          ),
+        ),
+        const SizedBox(height: 12),
         Text(
-          '生词本共 $totalCount 个词条。学习界面会先复习到期单词，再学习新词。',
+          '生词本共 $totalCount 个词条。每天先完成新学，再复习今天到期的单词，全部完成后打卡。',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -369,7 +467,8 @@ class _WordbookTab extends StatelessWidget {
         ),
       );
     }
-    final due = entries.where((entry) => entry.isDue).toList();
+    final due = entries.where((entry) => entry.learned && entry.isDue).length;
+    final fresh = entries.where((entry) => entry.isNew).length;
     return RefreshIndicator(
       onRefresh: onRefresh,
       child: ListView(
@@ -379,25 +478,25 @@ class _WordbookTab extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '到期 ${due.length} 个 · 共 ${entries.length} 个',
+                  '待学习 $fresh · 到期 $due · 共 ${entries.length}',
                   style: theme.textTheme.titleSmall,
                 ),
               ),
-              if (due.isNotEmpty)
-                FilledButton(
-                  onPressed: onStart,
-                  child: const Text('复习到期'),
-                ),
+              if (due + fresh > 0)
+                FilledButton(onPressed: onStart, child: const Text('开始任务')),
             ],
           ),
           const SizedBox(height: 8),
           ...entries.map((entry) {
-            final isDue = entry.isDue;
+            final isDue = entry.learned && entry.isDue;
+            final isNew = entry.isNew;
             return ListTile(
               contentPadding: EdgeInsets.zero,
               leading: CircleAvatar(
                 backgroundColor: isDue
                     ? theme.colorScheme.primaryContainer
+                    : isNew
+                    ? theme.colorScheme.tertiaryContainer
                     : theme.colorScheme.surfaceContainerHighest,
                 child: Text(
                   entry.lemma.isEmpty
@@ -406,6 +505,8 @@ class _WordbookTab extends StatelessWidget {
                   style: TextStyle(
                     color: isDue
                         ? theme.colorScheme.onPrimaryContainer
+                        : isNew
+                        ? theme.colorScheme.onTertiaryContainer
                         : theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
@@ -415,11 +516,13 @@ class _WordbookTab extends StatelessWidget {
                   Flexible(
                     child: Text(entry.lemma, overflow: TextOverflow.ellipsis),
                   ),
-                  if (isDue) ...[
+                  if (isDue || isNew) ...[
                     const SizedBox(width: 8),
                     Badge(
-                      label: const Text('到期'),
-                      backgroundColor: theme.colorScheme.primary,
+                      label: Text(isDue ? '到期' : '待学习'),
+                      backgroundColor: isDue
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.tertiary,
                     ),
                   ],
                 ],
@@ -432,7 +535,11 @@ class _WordbookTab extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               trailing: Text(
-                isDue ? '现在' : _dueLabel(entry.dueAt),
+                isNew
+                    ? '新词'
+                    : isDue
+                    ? '现在'
+                    : _dueLabel(entry.dueAt),
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -510,9 +617,7 @@ class _ImportTab extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.menu_book_outlined),
               title: Text(book.name),
-              subtitle: Text(
-                '${book.language} · ${book.entries.length} 个词条',
-              ),
+              subtitle: Text('${book.language} · ${book.entries.length} 个词条'),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -531,149 +636,6 @@ class _ImportTab extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-class _ReviewSheetBody extends ConsumerStatefulWidget {
-  const _ReviewSheetBody({required this.entry});
-
-  final VocabEntry entry;
-
-  @override
-  ConsumerState<_ReviewSheetBody> createState() => _ReviewSheetBodyState();
-}
-
-class _ReviewSheetBodyState extends ConsumerState<_ReviewSheetBody> {
-  bool _revealed = false;
-  bool _saving = false;
-
-  Future<void> _rate(ReviewGrade grade) async {
-    setState(() => _saving = true);
-    await ref.read(vocabStoreProvider).review(widget.entry, grade);
-    if (mounted) {
-      Navigator.of(context).pop(true);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final entry = widget.entry;
-    return SafeArea(
-      child: Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          bottom: MediaQuery.viewInsetsOf(context).bottom + 20,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      entry.lemma,
-                      style: theme.textTheme.headlineMedium,
-                    ),
-                  ),
-                  if ((entry.pos ?? '').isNotEmpty)
-                    Chip(
-                      label: Text(entry.pos!),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                ],
-              ),
-              if (entry.word.toLowerCase() != entry.lemma.toLowerCase())
-                Text(
-                  '原文：${entry.word}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              const SizedBox(height: 12),
-              Text(entry.sentence, style: theme.textTheme.bodyLarge),
-              if ((entry.translation ?? '').isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
-                  entry.translation!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 20),
-              if (!_revealed)
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: () => setState(() => _revealed = true),
-                    child: const Text('显示释义'),
-                  ),
-                )
-              else ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    entry.meaning.isEmpty ? '（没有释义）' : entry.meaning,
-                    style: theme.textTheme.bodyLarge?.copyWith(
-                      color: theme.colorScheme.onSecondaryContainer,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _saving
-                            ? null
-                            : () => _rate(ReviewGrade.forgot),
-                        child: const Text('忘记'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _saving
-                            ? null
-                            : () => _rate(ReviewGrade.hard),
-                        child: const Text('模糊'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: _saving
-                            ? null
-                            : () => _rate(ReviewGrade.good),
-                        child: const Text('记得'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton.tonal(
-                        onPressed: _saving
-                            ? null
-                            : () => _rate(ReviewGrade.easy),
-                        child: const Text('简单'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
     );
   }
 }

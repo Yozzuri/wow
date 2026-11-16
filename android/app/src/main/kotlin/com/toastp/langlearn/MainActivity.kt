@@ -7,5 +7,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MediaSessionPlugin(this, flutterEngine.dartExecutor.binaryMessenger)
+        CheckinWidgetBridge(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 }
