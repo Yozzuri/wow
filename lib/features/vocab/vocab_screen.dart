@@ -65,6 +65,23 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
     await _load();
   }
 
+  Future<void> _startExtra(DailyTasks tasks) async {
+    if (tasks.extraReviewWords.isEmpty) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => LearnSessionPage(
+          newEntries: const [],
+          reviewEntries: tasks.extraReviewWords,
+          pool: _entries,
+        ),
+      ),
+    );
+    await ref.read(checkinProvider.notifier).refresh();
+    await _load();
+  }
+
   Future<void> _reviewSingle(VocabEntry entry) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -199,6 +216,9 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
               streak: checkin.streak,
               checkedInToday: checkin.checkedInToday,
               onStart: () => _startDaily(tasks),
+              onContinueReview: tasks.extraReviewWords.isEmpty
+                  ? null
+                  : () => _startExtra(tasks),
               onCheckIn: _checkIn,
               onOpenPlan: () => context.go('/settings'),
             ),
@@ -206,7 +226,8 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
               entries: _entries,
               onReview: _reviewSingle,
               onRefresh: _load,
-              onStart: () => _startDaily(tasks),
+              onStart: () =>
+                  tasks.total > 0 ? _startDaily(tasks) : _startExtra(tasks),
             ),
             _ImportTab(
               wordbooks: _wordbooks,
@@ -229,6 +250,7 @@ class _LearnTab extends StatelessWidget {
     required this.streak,
     required this.checkedInToday,
     required this.onStart,
+    required this.onContinueReview,
     required this.onCheckIn,
     required this.onOpenPlan,
   });
@@ -238,6 +260,7 @@ class _LearnTab extends StatelessWidget {
   final int streak;
   final bool checkedInToday;
   final VoidCallback onStart;
+  final VoidCallback? onContinueReview;
   final VoidCallback onCheckIn;
   final VoidCallback onOpenPlan;
 
@@ -322,6 +345,16 @@ class _LearnTab extends StatelessWidget {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (tasks.extraReviewWords.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '今日计划之外还有 ${tasks.extraReviewWords.length} 个到期词',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.tertiary,
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -331,6 +364,17 @@ class _LearnTab extends StatelessWidget {
                     label: Text(hasQueue ? '开始今日任务' : '今日任务已完成'),
                   ),
                 ),
+                if (!hasQueue && onContinueReview != null) ...[
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: onContinueReview,
+                      icon: const Icon(Icons.refresh),
+                      label: Text('继续复习剩余 ${tasks.extraReviewWords.length} 个'),
+                    ),
+                  ),
+                ],
                 if (!hasQueue && totalCount > 0 && !checkedInToday) ...[
                   const SizedBox(height: 10),
                   SizedBox(

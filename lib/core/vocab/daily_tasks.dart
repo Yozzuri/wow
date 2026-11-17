@@ -5,6 +5,7 @@ class DailyTasks {
   const DailyTasks({
     required this.newWords,
     required this.reviewWords,
+    required this.extraReviewWords,
     required this.newDoneToday,
     required this.reviewDoneToday,
     required this.plan,
@@ -12,6 +13,10 @@ class DailyTasks {
 
   final List<VocabEntry> newWords;
   final List<VocabEntry> reviewWords;
+
+  /// Due words beyond today's review plan. They are never blocked: the
+  /// learning screen offers a "continue reviewing" entry for them.
+  final List<VocabEntry> extraReviewWords;
   final int newDoneToday;
   final int reviewDoneToday;
   final LearningPlan plan;
@@ -54,12 +59,17 @@ DailyTasks buildDailyTasks(
   final newWords = entries.where((entry) => !entry.learned).toList()
     ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   final reviewWords =
-      entries.where((entry) => entry.learned && entry.isDue).toList()
+      entries
+          .where(
+            (entry) => entry.learned && !entry.dueAt.isAfter(today),
+          )
+          .toList()
         ..sort((a, b) => a.dueAt.compareTo(b.dueAt));
 
   return DailyTasks(
     newWords: newWords.take(newBudget).toList(),
     reviewWords: reviewWords.take(reviewBudget).toList(),
+    extraReviewWords: reviewWords.skip(reviewBudget).toList(),
     newDoneToday: newDone,
     reviewDoneToday: reviewDone,
     plan: plan,

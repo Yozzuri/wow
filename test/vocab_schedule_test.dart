@@ -130,6 +130,7 @@ void main() {
       );
       expect(tasks.newWords.map((e) => e.key), ['new1', 'new2']);
       expect(tasks.reviewWords.map((e) => e.key), ['due1']);
+      expect(tasks.extraReviewWords.map((e) => e.key), ['due2']);
       expect(tasks.isDone, isFalse);
     });
 

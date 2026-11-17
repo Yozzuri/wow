@@ -891,7 +891,10 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
     final duration = widget.durationMs > 0
         ? widget.durationMs
         : widget.document.meta.durationMs ?? 0;
-    return Column(
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 16, 12, 4),
@@ -1028,46 +1031,6 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                   ),
                 ),
               ),
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                height: 56,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          theme.colorScheme.surface.withValues(alpha: 0.95),
-                          theme.colorScheme.surface.withValues(alpha: 0),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: 64,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          theme.colorScheme.surface.withValues(alpha: 0),
-                          theme.colorScheme.surface.withValues(alpha: 0.95),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
               if (!_following)
                 Positioned(
                   right: 16,
@@ -1110,6 +1073,48 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
               ),
             );
           },
+        ),
+      ],
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          height: 72,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    theme.colorScheme.surface.withValues(alpha: 0.95),
+                    theme.colorScheme.surface.withValues(alpha: 0),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: 80,
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    theme.colorScheme.surface.withValues(alpha: 0),
+                    theme.colorScheme.surface.withValues(alpha: 0.95),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );

@@ -57,6 +57,7 @@ class VocabEntry {
     this.learned = false,
     this.learnedAt,
     this.lastReviewedAt,
+    this.learnState = 0,
   });
 
   final String key;
@@ -80,6 +81,10 @@ class VocabEntry {
   final bool learned;
   final DateTime? learnedAt;
   final DateTime? lastReviewedAt;
+
+  /// In-session learning progress: 0 familiarity, 1 meaning,
+  /// 2 word choice, 3 spelling. Persisted so quitting keeps progress.
+  final int learnState;
 
   bool get isNew => !learned;
   bool get isDue => !dueAt.isAfter(DateTime.now());
@@ -107,6 +112,7 @@ class VocabEntry {
     if (learnedAt != null) 'learnedAt': learnedAt!.toIso8601String(),
     if (lastReviewedAt != null)
       'lastReviewedAt': lastReviewedAt!.toIso8601String(),
+    'learnState': learnState,
   };
 
   factory VocabEntry.fromJson(Map<String, dynamic> json) => VocabEntry(
@@ -135,6 +141,7 @@ class VocabEntry {
             (json['intervalDays'] as int? ?? 0) > 0),
     learnedAt: DateTime.tryParse(json['learnedAt'] as String? ?? ''),
     lastReviewedAt: DateTime.tryParse(json['lastReviewedAt'] as String? ?? ''),
+    learnState: (json['learnState'] as int? ?? 0).clamp(0, 3),
   );
 
   VocabEntry copyWith({
@@ -146,6 +153,7 @@ class VocabEntry {
     bool? learned,
     DateTime? learnedAt,
     DateTime? lastReviewedAt,
+    int? learnState,
   }) => VocabEntry(
     key: key,
     word: word,
@@ -168,6 +176,7 @@ class VocabEntry {
     learned: learned ?? this.learned,
     learnedAt: learnedAt ?? this.learnedAt,
     lastReviewedAt: lastReviewedAt ?? this.lastReviewedAt,
+    learnState: learnState ?? this.learnState,
   );
 }
 
@@ -298,8 +307,7 @@ class VocabStore {
     return added;
   }
 
-  /// Marks a new word as learned. It becomes due immediately so it joins
-  /// today's review queue.
+  /// Marks a new word as learned. Its first review is due tomorrow.
   Future<VocabEntry?> markLearned(VocabEntry entry) async {
     final entries = await load();
     final index = entries.indexWhere((item) => item.key == entry.key);
@@ -307,13 +315,27 @@ class VocabStore {
       return null;
     }
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     final updated = entry.copyWith(
       learned: true,
       learnedAt: now,
-      dueAt: now,
+      dueAt: today.add(const Duration(days: 1)),
       intervalDays: 0,
       reps: 0,
+      learnState: 0,
     );
+    entries[index] = updated;
+    await _save(entries);
+    return updated;
+  }
+
+  Future<VocabEntry?> updateLearnState(VocabEntry entry, int state) async {
+    final entries = await load();
+    final index = entries.indexWhere((item) => item.key == entry.key);
+    if (index < 0) {
+      return null;
+    }
+    final updated = entry.copyWith(learnState: state.clamp(0, 3));
     entries[index] = updated;
     await _save(entries);
     return updated;
@@ -342,6 +364,7 @@ class VocabStore {
       reps: schedule.stage,
       lapses: grade == ReviewGrade.forgot ? entry.lapses + 1 : entry.lapses,
       dueAt: today.add(Duration(days: schedule.intervalDays)),
+      learnState: 0,
     );
     entries[index] = updated;
     await _save(entries);
