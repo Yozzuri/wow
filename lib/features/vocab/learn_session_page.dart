@@ -3,6 +3,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/ai/ai_settings.dart';
+import '../../core/ai/word_analysis.dart';
 import '../../core/models/content_document.dart';
 import '../../core/text/normalize.dart';
 import '../../core/vocab/checkin_store.dart';
@@ -320,6 +322,53 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
     return ReviewGrade.good;
   }
 
+  Future<void> _refreshAnalysis(VocabEntry entry) async {
+    final config = await ref.read(aiConfigProvider.future);
+    if (!mounted) {
+      return;
+    }
+    if (!config.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在设置中配置 AI 接口')),
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final analysis = await const WordAnalyzer().analyze(
+        config: config,
+        word: entry.word.trim().isEmpty ? entry.lemma : entry.word,
+        sentence: entry.sentence,
+        language: entry.language,
+        lemmaHint: entry.lemma,
+        force: true,
+      );
+      final updated = await ref
+          .read(vocabStoreProvider)
+          .updateAnalysis(entry, analysis);
+      if (!mounted) {
+        return;
+      }
+      if (updated != null) {
+        final index = _phaseWords.indexWhere((item) => item.key == entry.key);
+        if (index >= 0) {
+          _phaseWords[index] = updated;
+        }
+      }
+      setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('补全释义失败：$error')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
   Future<void> _showAnalysis(VocabEntry entry) async {
     await showWordExplanation(
       context,
@@ -529,13 +578,26 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
                       message: '词库里缺少同语言的相近单词，跳过选词。',
                       onSkip: () => _advanceState(entry),
                     )
-                  : _ChoiceStep(
-                      title: '选出与该释义对应的单词',
-                      prompt: entry.meaning,
-                      options: _wordOptions,
-                      wrongChoice: _wrongChoice,
-                      feedback: _feedback,
-                      onSelect: (value) => _onChoice(value, entry.lemma),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _WordMeaningView(
+                          entry: entry,
+                          onRefresh: entry.senses.length <= 1
+                              ? () => _refreshAnalysis(entry)
+                              : null,
+                          refreshing: _busy,
+                        ),
+                        const SizedBox(height: 12),
+                        _ChoiceStep(
+                          title: '选出与该释义对应的单词',
+                          prompt: '',
+                          options: _wordOptions,
+                          wrongChoice: _wrongChoice,
+                          feedback: _feedback,
+                          onSelect: (value) => _onChoice(value, entry.lemma),
+                        ),
+                      ],
                     )
             else
               _SpellingStep(
@@ -545,10 +607,141 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
                 feedback: _feedback,
                 onSubmit: () => _onSpelling(entry.lemma),
                 onForgot: _onForgot,
+                onRefresh: entry.senses.length <= 1
+                    ? () => _refreshAnalysis(entry)
+                    : null,
+                refreshing: _busy,
               ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _WordMeaningView extends StatelessWidget {
+  const _WordMeaningView({
+    required this.entry,
+    this.onRefresh,
+    this.refreshing = false,
+  });
+
+  final VocabEntry entry;
+  final VoidCallback? onRefresh;
+  final bool refreshing;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final senses = entry.allSenses;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (senses.isEmpty)
+          Text(
+            '（没有释义）',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          )
+        else
+          for (final sense in senses)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (sense.pos.trim().isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.secondaryContainer,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        sense.pos,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      sense.meaning,
+                      style: theme.textTheme.bodyLarge,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        if (entry.usage.trim().isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text('用法', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 2),
+          Text(
+            entry.usage,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (entry.examples.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('例句', style: theme.textTheme.labelLarge),
+          for (final example in entry.examples.take(3))
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                '· $example',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+        ],
+        if (entry.forms.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('词形', style: theme.textTheme.labelLarge),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final form in entry.forms)
+                Chip(
+                  label: Text(
+                    form.label.isEmpty
+                        ? form.value
+                        : '${form.label} ${form.value}',
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+        ],
+        if (onRefresh != null) ...[
+          const SizedBox(height: 4),
+          TextButton.icon(
+            onPressed: refreshing ? null : onRefresh,
+            icon: refreshing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.auto_awesome, size: 16),
+            label: Text(refreshing ? '补全中…' : 'AI 补全完整释义'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -790,6 +983,8 @@ class _SpellingStep extends StatelessWidget {
     required this.feedback,
     required this.onSubmit,
     required this.onForgot,
+    this.onRefresh,
+    this.refreshing = false,
   });
 
   final VocabEntry entry;
@@ -798,6 +993,8 @@ class _SpellingStep extends StatelessWidget {
   final String feedback;
   final VoidCallback onSubmit;
   final VoidCallback onForgot;
+  final VoidCallback? onRefresh;
+  final bool refreshing;
 
   @override
   Widget build(BuildContext context) {
@@ -818,7 +1015,9 @@ class _SpellingStep extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                entry.meaning.isEmpty ? '（没有释义）' : entry.meaning,
+                entry.displayMeaning.isEmpty
+                    ? '（没有释义）'
+                    : entry.displayMeaning,
                 style: theme.textTheme.titleMedium?.copyWith(
                   color: theme.colorScheme.onSecondaryContainer,
                 ),
@@ -843,6 +1042,12 @@ class _SpellingStep extends StatelessWidget {
               ],
             ],
           ),
+        ),
+        const SizedBox(height: 12),
+        _WordMeaningView(
+          entry: entry,
+          onRefresh: onRefresh,
+          refreshing: refreshing,
         ),
         const SizedBox(height: 16),
         TextField(

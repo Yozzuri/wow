@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../ai/word_analysis.dart';
 import '../models/content_document.dart';
 import '../text/normalize.dart';
 
@@ -58,6 +59,13 @@ class VocabEntry {
     this.learnedAt,
     this.lastReviewedAt,
     this.learnState = 0,
+    this.senses = const [],
+    this.forms = const [],
+    this.usage = '',
+    this.examples = const [],
+    this.surfaceReading,
+    this.lemmaReading,
+    this.relation = '',
   });
 
   final String key;
@@ -85,6 +93,41 @@ class VocabEntry {
   /// In-session learning progress: 0 familiarity, 1 meaning,
   /// 2 word choice, 3 spelling. Persisted so quitting keeps progress.
   final int learnState;
+  final List<WordSense> senses;
+  final List<WordFormInfo> forms;
+  final String usage;
+  final List<String> examples;
+  final String? surfaceReading;
+  final String? lemmaReading;
+  final String relation;
+
+  List<WordSense> get allSenses {
+    if (senses.isNotEmpty) {
+      return senses;
+    }
+    if (meaning.trim().isEmpty) {
+      return const [];
+    }
+    return [WordSense(pos: pos ?? '', meaning: meaning)];
+  }
+
+  String get displayMeaning => allSenses
+      .map(
+        (sense) => sense.pos.isEmpty
+            ? sense.meaning
+            : '${sense.pos} ${sense.meaning}',
+      )
+      .where((value) => value.trim().isNotEmpty)
+      .join('；');
+
+  String? get displayPos {
+    for (final sense in allSenses) {
+      if (sense.pos.trim().isNotEmpty) {
+        return sense.pos.trim();
+      }
+    }
+    return pos;
+  }
 
   bool get isNew => !learned;
   bool get isDue => !dueAt.isAfter(DateTime.now());
@@ -113,6 +156,14 @@ class VocabEntry {
     if (lastReviewedAt != null)
       'lastReviewedAt': lastReviewedAt!.toIso8601String(),
     'learnState': learnState,
+    if (senses.isNotEmpty)
+      'senses': senses.map((sense) => sense.toJson()).toList(),
+    if (forms.isNotEmpty) 'forms': forms.map((form) => form.toJson()).toList(),
+    if (usage.isNotEmpty) 'usage': usage,
+    if (examples.isNotEmpty) 'examples': examples,
+    if (surfaceReading != null) 'surfaceReading': surfaceReading,
+    if (lemmaReading != null) 'lemmaReading': lemmaReading,
+    if (relation.isNotEmpty) 'relation': relation,
   };
 
   factory VocabEntry.fromJson(Map<String, dynamic> json) => VocabEntry(
@@ -142,6 +193,23 @@ class VocabEntry {
     learnedAt: DateTime.tryParse(json['learnedAt'] as String? ?? ''),
     lastReviewedAt: DateTime.tryParse(json['lastReviewedAt'] as String? ?? ''),
     learnState: (json['learnState'] as int? ?? 0).clamp(0, 3),
+    senses: (json['senses'] as List?)
+            ?.whereType<Map>()
+            .map((item) => WordSense.fromJson(item.cast<String, dynamic>()))
+            .where((sense) => sense.meaning.isNotEmpty)
+            .toList() ??
+        const [],
+    forms: (json['forms'] as List?)
+            ?.whereType<Map>()
+            .map((item) => WordFormInfo.fromJson(item.cast<String, dynamic>()))
+            .where((form) => form.value.isNotEmpty)
+            .toList() ??
+        const [],
+    usage: json['usage'] as String? ?? '',
+    examples: (json['examples'] as List?)?.whereType<String>().toList() ?? const [],
+    surfaceReading: json['surfaceReading'] as String?,
+    lemmaReading: json['lemmaReading'] as String?,
+    relation: json['relation'] as String? ?? '',
   );
 
   VocabEntry copyWith({
@@ -177,6 +245,47 @@ class VocabEntry {
     learnedAt: learnedAt ?? this.learnedAt,
     lastReviewedAt: lastReviewedAt ?? this.lastReviewedAt,
     learnState: learnState ?? this.learnState,
+    senses: senses,
+    forms: forms,
+    usage: usage,
+    examples: examples,
+    surfaceReading: surfaceReading,
+    lemmaReading: lemmaReading,
+    relation: relation,
+  );
+
+  VocabEntry copyWithAnalysis(WordAnalysis analysis) => VocabEntry(
+    key: key,
+    word: word,
+    lemma: analysis.lemma,
+    pos: analysis.pos,
+    meaning: analysis.meaningSummary,
+    sentence: sentence,
+    translation: translation,
+    reading: analysis.reading,
+    inflection: analysis.isInflected
+        ? analysis.inflectionMarkdown
+        : (relation.isNotEmpty ? relation : inflection),
+    lemmaSentence: analysis.lemmaSentence,
+    sourceTitle: sourceTitle,
+    language: language,
+    createdAt: createdAt,
+    dueAt: dueAt,
+    intervalDays: intervalDays,
+    ease: ease,
+    reps: reps,
+    lapses: lapses,
+    learned: learned,
+    learnedAt: learnedAt,
+    lastReviewedAt: lastReviewedAt,
+    learnState: learnState,
+    senses: analysis.senses,
+    forms: analysis.forms,
+    usage: analysis.usage,
+    examples: analysis.examples,
+    surfaceReading: analysis.surfaceReading,
+    lemmaReading: analysis.lemmaReading,
+    relation: analysis.relation,
   );
 }
 
@@ -234,6 +343,13 @@ class VocabStore {
     String? lemmaSentence,
     required String sourceTitle,
     String language = 'en',
+    List<WordSense> senses = const [],
+    List<WordFormInfo> forms = const [],
+    String usage = '',
+    List<String> examples = const [],
+    String? surfaceReading,
+    String? lemmaReading,
+    String relation = '',
   }) async {
     final resolvedLemma = (lemma ?? word).trim();
     if (resolvedLemma.isEmpty) {
@@ -261,6 +377,13 @@ class VocabStore {
         language: language,
         createdAt: now,
         dueAt: now,
+        senses: senses,
+        forms: forms,
+        usage: usage,
+        examples: examples,
+        surfaceReading: surfaceReading,
+        lemmaReading: lemmaReading,
+        relation: relation,
       ),
     );
     await _save(entries);
@@ -296,6 +419,14 @@ class VocabStore {
             language: document.meta.language,
             createdAt: now,
             dueAt: now,
+            senses: (token.meaning ?? '').trim().isEmpty
+                ? const []
+                : [
+                    WordSense(
+                      pos: token.pos ?? '',
+                      meaning: token.meaning!.trim(),
+                    ),
+                  ],
           ),
         );
         added++;
@@ -336,6 +467,21 @@ class VocabStore {
       return null;
     }
     final updated = entry.copyWith(learnState: state.clamp(0, 3));
+    entries[index] = updated;
+    await _save(entries);
+    return updated;
+  }
+
+  Future<VocabEntry?> updateAnalysis(
+    VocabEntry entry,
+    WordAnalysis analysis,
+  ) async {
+    final entries = await load();
+    final index = entries.indexWhere((item) => item.key == entry.key);
+    if (index < 0) {
+      return null;
+    }
+    final updated = entry.copyWithAnalysis(analysis);
     entries[index] = updated;
     await _save(entries);
     return updated;

@@ -306,6 +306,13 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
             : '音调：${entry.pitchAccent}',
         language: book.language,
         sourceTitle: book.name,
+        senses: entry.senses,
+        forms: entry.forms,
+        usage: entry.usage,
+        examples: entry.examples,
+        surfaceReading: entry.surfaceReading,
+        lemmaReading: entry.lemmaReading,
+        relation: entry.relation,
       );
       if (inserted) {
         added++;

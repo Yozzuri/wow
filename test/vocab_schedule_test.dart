@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:langlearn/core/ai/word_analysis.dart';
 import 'package:langlearn/core/vocab/checkin_store.dart';
 import 'package:langlearn/core/vocab/daily_tasks.dart';
 import 'package:langlearn/core/vocab/learning_plan.dart';
@@ -163,5 +166,27 @@ void main() {
       expect(tasks.newWords.map((e) => e.key), ['new1']);
       expect(tasks.reviewWords, isEmpty);
     });
+  });
+
+  test('vocab entries keep all senses with part of speech', () {
+    final entry = VocabEntry(
+      key: 'make_test',
+      word: 'make',
+      lemma: 'make',
+      meaning: '',
+      sentence: 'It can make you happy.',
+      sourceTitle: 'test',
+      createdAt: DateTime(2026, 11, 17),
+      dueAt: DateTime(2026, 11, 17),
+      senses: const [
+        WordSense(pos: 'v.', meaning: '使成为'),
+        WordSense(pos: 'n.', meaning: '品牌'),
+      ],
+    );
+    final decoded = VocabEntry.fromJson(
+      (jsonDecode(jsonEncode(entry.toJson())) as Map).cast<String, dynamic>(),
+    );
+    expect(decoded.allSenses, hasLength(2));
+    expect(decoded.displayMeaning, 'v. 使成为；n. 品牌');
   });
 }

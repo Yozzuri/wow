@@ -134,6 +134,13 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
           lemmaSentence: analysis.lemmaSentence,
           language: widget.language,
           sourceTitle: widget.sourceTitle ?? '',
+          senses: analysis.senses,
+          forms: analysis.forms,
+          usage: analysis.usage,
+          examples: analysis.examples,
+          surfaceReading: analysis.surfaceReading,
+          lemmaReading: analysis.lemmaReading,
+          relation: analysis.relation,
         );
     if (!mounted) return;
     if (added) {
