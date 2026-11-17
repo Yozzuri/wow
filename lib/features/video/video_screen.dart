@@ -17,6 +17,7 @@ import '../../core/vocab/vocab_store.dart';
 import '../common/interactive_line.dart';
 import '../common/segment_notes.dart';
 import '../common/word_explanation_sheet.dart';
+import 'online_video_sheet.dart';
 
 class VideoScreen extends ConsumerStatefulWidget {
   const VideoScreen({super.key});
@@ -79,6 +80,53 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
       await next?.dispose();
       if (mounted) {
         _showMessage('无法播放该视频：$error');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _openOnlineVideo() async {
+    final result = await showOnlineVideoSheet(context, language: _language);
+    if (result == null || !mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    VideoPlayerController? next;
+    try {
+      next = VideoPlayerController.networkUrl(
+        result.mediaUrl,
+        httpHeaders: result.headers,
+      );
+      await next.initialize();
+      await _controller?.dispose();
+      await next.setLooping(false);
+      await next.setPlaybackSpeed(_speed);
+      await next.play();
+      if (!mounted) {
+        await next.dispose();
+        return;
+      }
+      setState(() {
+        _controller = next;
+        _videoName = result.title;
+        _document = result.document;
+        _baseDocument = result.document;
+        _subtitleName = result.subtitleLabel;
+        _notesExpanded = false;
+        if (result.document != null) {
+          _language = result.document!.meta.language;
+        }
+      });
+      if (result.document == null) {
+        _showMessage('视频已开始播放，但没有找到在线字幕，可以手动导入字幕文件');
+      }
+    } catch (error) {
+      await next?.dispose();
+      if (mounted) {
+        _showMessage('无法播放在线视频：$error');
       }
     } finally {
       if (mounted) {
@@ -420,6 +468,11 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
             ],
           ),
           IconButton(
+            tooltip: '在线视频（实验性）',
+            onPressed: _busy ? null : _openOnlineVideo,
+            icon: const Icon(Icons.public),
+          ),
+          IconButton(
             tooltip: '载入外挂字幕',
             onPressed: _busy ? null : _pickSubtitle,
             icon: const Icon(Icons.subtitles_outlined),
@@ -432,7 +485,10 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         ],
       ),
       body: controller == null
-          ? _EmptyState(onPickVideo: _busy ? null : _pickVideo)
+          ? _EmptyState(
+              onPickVideo: _busy ? null : _pickVideo,
+              onOnlineVideo: _busy ? null : _openOnlineVideo,
+            )
           : Column(
               children: [
                 _VideoStage(
@@ -995,9 +1051,10 @@ String _formatMs(int ms) {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onPickVideo});
+  const _EmptyState({required this.onPickVideo, required this.onOnlineVideo});
 
   final VoidCallback? onPickVideo;
+  final VoidCallback? onOnlineVideo;
 
   @override
   Widget build(BuildContext context) {
@@ -1028,6 +1085,12 @@ class _EmptyState extends StatelessWidget {
               onPressed: onPickVideo,
               icon: const Icon(Icons.video_file_outlined),
               label: const Text('选择视频'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: onOnlineVideo,
+              icon: const Icon(Icons.public),
+              label: const Text('在线视频（实验性）'),
             ),
           ],
         ),
