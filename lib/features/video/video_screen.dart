@@ -12,8 +12,10 @@ import 'package:video_player/video_player.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/models/content_document.dart';
+import '../../core/ai/transcription_service.dart';
 import '../../core/net/platform_http.dart';
 import '../../core/video/online_video.dart';
+import '../../core/video/online_video_settings.dart';
 import '../../core/reading/reading_book.dart';
 import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
@@ -42,6 +44,9 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
   int _analysisTotal = 0;
   int _analysisFailed = 0;
   bool _notesExpanded = false;
+  bool _transcribing = false;
+  Uri? _audioUrl;
+  Map<String, String> _onlineHeaders = const {};
   double _speed = 1.0;
   String _language = 'en';
 
@@ -79,6 +84,8 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         _baseDocument = null;
         _subtitleName = null;
         _notesExpanded = false;
+        _audioUrl = null;
+        _onlineHeaders = const {};
       });
     } catch (error) {
       await next?.dispose();
@@ -99,22 +106,32 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     }
     setState(() => _busy = true);
     VideoPlayerController? next;
+    final cacheFirst = ref.read(onlineVideoSettingsProvider).cacheBeforePlay;
     try {
-      try {
-        next = VideoPlayerController.networkUrl(
-          result.mediaUrl,
-          httpHeaders: result.headers,
-        );
-        await next.initialize();
-      } catch (_) {
-        await next?.dispose();
-        next = null;
+      if (cacheFirst) {
         if (mounted) {
-          _showMessage('在线播放失败，正在缓存到本地后重试…');
+          _showMessage('正在缓存视频到本地…');
         }
         final file = await _cacheOnlineVideo(result);
         next = VideoPlayerController.file(file);
         await next.initialize();
+      } else {
+        try {
+          next = VideoPlayerController.networkUrl(
+            result.mediaUrl,
+            httpHeaders: result.headers,
+          );
+          await next.initialize();
+        } catch (_) {
+          await next?.dispose();
+          next = null;
+          if (mounted) {
+            _showMessage('在线播放失败，正在缓存到本地后重试…');
+          }
+          final file = await _cacheOnlineVideo(result);
+          next = VideoPlayerController.file(file);
+          await next.initialize();
+        }
       }
       await _controller?.dispose();
       await next.setLooping(false);
@@ -131,6 +148,8 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
         _baseDocument = result.document;
         _subtitleName = result.subtitleLabel;
         _notesExpanded = false;
+        _audioUrl = result.audioUrl ?? result.mediaUrl;
+        _onlineHeaders = result.headers;
         if (result.document != null) {
           _language = result.document!.meta.language;
         }
@@ -146,6 +165,78 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     } finally {
       if (mounted) {
         setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _transcribeOnline() async {
+    final audio = _audioUrl;
+    if (audio == null || _transcribing) {
+      return;
+    }
+    setState(() => _transcribing = true);
+    File? audioFile;
+    try {
+      final config = await ref.read(aiConfigProvider.future);
+      if (!config.isConfigured) {
+        _showMessage('请先在设置中配置 AI 接口');
+        return;
+      }
+      final temp = await getTemporaryDirectory();
+      final dir = Directory('${temp.path}/transcribe');
+      await dir.create(recursive: true);
+      final path = audio.path.toLowerCase();
+      final extension = path.endsWith('.m4a') || path.endsWith('.m4s')
+          ? 'm4a'
+          : path.endsWith('.mp3')
+          ? 'mp3'
+          : path.endsWith('.webm')
+          ? 'webm'
+          : 'mp4';
+      audioFile = File(
+        '${dir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.$extension',
+      );
+      _showMessage('正在下载音频…');
+      await PlatformHttp.download(
+        audio,
+        audioFile.path,
+        headers: _onlineHeaders,
+      );
+      final size = await audioFile.length();
+      if (size > TranscriptionService.maxBytes) {
+        _showMessage('音频超过 25MB，暂时无法一次转写');
+        return;
+      }
+      final model = ref.read(onlineVideoSettingsProvider).transcriptionModel;
+      _showMessage('正在识别语音（$model）…');
+      final document = await const TranscriptionService().transcribe(
+        config: config,
+        filePath: audioFile.path,
+        language: _language,
+        title: _videoName ?? '在线视频',
+        model: model,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _document = document;
+        _baseDocument = document;
+        _subtitleName = 'AI 听写 · $model';
+        _language = document.meta.language;
+        _notesExpanded = false;
+      });
+      _showMessage('字幕听写完成，共 ${document.segments.length} 句');
+    } catch (error) {
+      if (mounted) {
+        _showMessage('语音识别失败：$error');
+      }
+    } finally {
+      if (audioFile != null && await audioFile.exists()) {
+        await audioFile.delete();
+      }
+      if (mounted) {
+        setState(() => _transcribing = false);
       }
     }
   }
@@ -544,6 +635,10 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
                   Expanded(
                     child: _NoSubtitleHint(
                       onPickSubtitle: _busy ? null : _pickSubtitle,
+                      onTranscribe: _audioUrl == null || _transcribing
+                          ? null
+                          : _transcribeOnline,
+                      transcribing: _transcribing,
                     ),
                   )
                 else ...[
@@ -1043,9 +1138,15 @@ class _ScrollingSubtitlesState extends State<_ScrollingSubtitles> {
 }
 
 class _NoSubtitleHint extends StatelessWidget {
-  const _NoSubtitleHint({required this.onPickSubtitle});
+  const _NoSubtitleHint({
+    required this.onPickSubtitle,
+    this.onTranscribe,
+    this.transcribing = false,
+  });
 
   final VoidCallback? onPickSubtitle;
+  final VoidCallback? onTranscribe;
+  final bool transcribing;
 
   @override
   Widget build(BuildContext context) {
@@ -1077,6 +1178,20 @@ class _NoSubtitleHint extends StatelessWidget {
               icon: const Icon(Icons.subtitles_outlined),
               label: const Text('载入字幕'),
             ),
+            if (onTranscribe != null) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: transcribing ? null : onTranscribe,
+                icon: transcribing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.graphic_eq),
+                label: Text(transcribing ? '正在识别语音…' : 'AI 听写字幕'),
+              ),
+            ],
           ],
         ),
       ),

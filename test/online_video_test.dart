@@ -41,6 +41,25 @@ void main() {
     expect(srt, contains('00:00:04,000 --> 00:00:05,250'));
   });
 
+  test('rewrites only bilivideo hosts to the selected CDN', () {
+    final source = Uri.parse(
+      'https://upos-sz-estgoss.bilivideo.com/a/b.mp4?token=1',
+    );
+    final ali = applyBilibiliCdn(
+      source,
+      'upos-sz-mirrorali.bilivideo.com',
+    );
+    expect(ali.host, 'upos-sz-mirrorali.bilivideo.com');
+    expect(ali.query, source.query);
+
+    final other = Uri.parse('https://example.com/a.mp4?token=1');
+    expect(
+      applyBilibiliCdn(other, 'upos-sz-mirrorali.bilivideo.com').host,
+      'example.com',
+    );
+    expect(applyBilibiliCdn(source, null), source);
+  });
+
   test('maps app languages to subtitle api codes', () {
     expect(subtitleLanguageCode('en'), 'eng');
     expect(subtitleLanguageCode('ja'), 'jpn');

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/appearance/appearance_settings.dart';
+import '../../core/video/online_video_settings.dart';
 import '../../core/vocab/learning_plan.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -87,6 +88,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _editTranscriptionModel() async {
+    final settings = ref.read(onlineVideoSettingsProvider);
+    final controller = TextEditingController(
+      text: settings.transcriptionModel,
+    );
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('语音转写模型'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '模型名',
+            hintText: 'whisper-1',
+            helperText: '需要接口支持 /audio/transcriptions',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result == null || result.isEmpty) {
+      return;
+    }
+    await ref
+        .read(onlineVideoSettingsProvider.notifier)
+        .update(settings.copyWith(transcriptionModel: result));
+  }
+
   Future<void> _pickBackground() async {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
@@ -127,6 +167,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final theme = Theme.of(context);
     final appearance = ref.watch(appearanceProvider);
     final plan = ref.watch(learningPlanProvider);
+    final onlineVideo = ref.watch(onlineVideoSettingsProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: !_loaded
@@ -233,6 +274,53 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onChanged: (value) => ref
                       .read(learningPlanProvider.notifier)
                       .update(plan.copyWith(reviewPerDay: value)),
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 12),
+                Text('在线视频', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  'B 站视频默认使用平台分配的媒体线路。直连慢或播放失败时可以换一条线路。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: onlineVideo.cdnLineId,
+                  decoration: const InputDecoration(labelText: 'B 站 CDN 线路'),
+                  items: [
+                    for (final line in onlineCdnLines)
+                      DropdownMenuItem(value: line.id, child: Text(line.label)),
+                  ],
+                  onChanged: (value) {
+                    if (value == null) {
+                      return;
+                    }
+                    ref
+                        .read(onlineVideoSettingsProvider.notifier)
+                        .update(onlineVideo.copyWith(cdnLineId: value));
+                  },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.graphic_eq),
+                  title: const Text('语音转写模型'),
+                  subtitle: Text(onlineVideo.transcriptionModel),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _editTranscriptionModel,
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('先缓存再播放'),
+                  subtitle: const Text('避免播放器直连失败；首次播放需要等待下载'),
+                  value: onlineVideo.cacheBeforePlay,
+                  onChanged: (value) => ref
+                      .read(onlineVideoSettingsProvider.notifier)
+                      .update(
+                        onlineVideo.copyWith(cacheBeforePlay: value),
+                      ),
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
@@ -361,7 +449,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
                   title: const Text('LangLearn'),
-                  subtitle: const Text('版本 0.6.2 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
+                  subtitle: const Text('版本 0.7.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
                 ),
               ],
             ),

@@ -27,6 +27,7 @@ class OnlineVideoResult {
     required this.mediaUrl,
     required this.title,
     required this.headers,
+    this.audioUrl,
     this.document,
     this.subtitleLabel,
   });
@@ -35,6 +36,10 @@ class OnlineVideoResult {
   final Uri mediaUrl;
   final String title;
   final Map<String, String> headers;
+
+  /// Audio-only source when available. Bilibili DASH audio is much smaller
+  /// than the video and is what the transcription API should receive.
+  final Uri? audioUrl;
   final ContentDocument? document;
   final String? subtitleLabel;
 }
@@ -138,6 +143,18 @@ const Set<String> _mediaExtensions = {
   'm4s',
 };
 
+/// Rewrites the media host to a Bilibili CDN line. Signed query strings stay
+/// intact; only the host is replaced, and only for bilivideo.com URLs.
+Uri applyBilibiliCdn(Uri media, String? cdnHost) {
+  if (cdnHost == null || cdnHost.trim().isEmpty) {
+    return media;
+  }
+  if (!media.host.endsWith('bilivideo.com')) {
+    return media;
+  }
+  return media.replace(host: cdnHost.trim());
+}
+
 bool isDirectMediaUri(Uri uri) {
   final path = uri.path.toLowerCase();
   final dot = path.lastIndexOf('.');
@@ -218,6 +235,7 @@ class OnlineVideoService {
     String rawUrl, {
     required String language,
     bool fetchSubtitles = true,
+    String? cdnHost,
   }) async {
     var uri = Uri.tryParse(rawUrl.trim());
     if (uri == null || !uri.hasScheme) {
@@ -236,6 +254,7 @@ class OnlineVideoService {
         mediaUrl: uri,
         title: title,
         headers: const {'User-Agent': _browserUserAgent},
+        audioUrl: uri,
         document: document,
         subtitleLabel: document == null ? null : '在线字幕 · OpenSubtitles',
       );
@@ -264,6 +283,7 @@ class OnlineVideoService {
         html,
         language: language,
         fetchSubtitles: fetchSubtitles,
+        cdnHost: cdnHost,
       );
     }
     final mediaUrl = _extractMediaUrl(html, finalUri);
@@ -282,6 +302,7 @@ class OnlineVideoService {
         'User-Agent': _browserUserAgent,
         'Referer': finalUri.toString(),
       },
+      audioUrl: mediaUrl,
       document: document,
       subtitleLabel: document == null ? null : '在线字幕 · OpenSubtitles',
     );
@@ -292,6 +313,7 @@ class OnlineVideoService {
     String html, {
     required String language,
     required bool fetchSubtitles,
+    String? cdnHost,
   }) async {
     final ids = parseBilibiliIds(pageUri.toString());
     if (ids == null) {
@@ -381,14 +403,70 @@ class OnlineVideoService {
             mediaUri.host.contains('bilibili.com'))) {
       mediaUri = mediaUri.replace(scheme: 'https');
     }
+    mediaUri = applyBilibiliCdn(mediaUri, cdnHost);
+    Uri? audioUrl;
+    if (document == null) {
+      audioUrl = await _bilibiliAudioUrl(
+        bvid: bvid,
+        aid: aid,
+        cid: cid,
+        headers: headers,
+        cdnHost: cdnHost,
+      );
+    }
     return OnlineVideoResult(
       pageUrl: pageUri,
       mediaUrl: mediaUri,
       title: title,
       headers: headers,
+      audioUrl: audioUrl ?? mediaUri,
       document: document,
       subtitleLabel: label,
     );
+  }
+
+  Future<Uri?> _bilibiliAudioUrl({
+    required String? bvid,
+    required String? aid,
+    required String cid,
+    required Map<String, String> headers,
+    String? cdnHost,
+  }) async {
+    try {
+      final play = await _getJson(
+        'https://api.bilibili.com/x/player/playurl',
+        {
+          if (bvid != null) 'bvid': bvid,
+          if (bvid == null && aid != null) 'avid': aid,
+          'cid': cid,
+          'qn': '64',
+          'fnval': '16',
+          'fourk': '0',
+        },
+        headers,
+      );
+      final data = play['data'];
+      final dash = data is Map ? data['dash'] : null;
+      final audios = dash is Map ? dash['audio'] : null;
+      if (audios is! List || audios.isEmpty) {
+        return null;
+      }
+      final first = audios.first;
+      if (first is! Map) {
+        return null;
+      }
+      final url = first['baseUrl'] as String?;
+      if (url == null || url.isEmpty) {
+        return null;
+      }
+      var uri = Uri.parse(url);
+      if (uri.scheme == 'http' && uri.host.contains('bilivideo.com')) {
+        uri = uri.replace(scheme: 'https');
+      }
+      return applyBilibiliCdn(uri, cdnHost);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<MapEntry<ContentDocument, String>?> _bilibiliSubtitle({

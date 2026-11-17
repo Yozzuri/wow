@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/video/online_video.dart';
+import '../../core/video/online_video_settings.dart';
 
 Future<OnlineVideoResult?> showOnlineVideoSheet(
   BuildContext context, {
@@ -15,16 +17,16 @@ Future<OnlineVideoResult?> showOnlineVideoSheet(
   );
 }
 
-class OnlineVideoSheet extends StatefulWidget {
+class OnlineVideoSheet extends ConsumerStatefulWidget {
   const OnlineVideoSheet({super.key, required this.language});
 
   final String language;
 
   @override
-  State<OnlineVideoSheet> createState() => _OnlineVideoSheetState();
+  ConsumerState<OnlineVideoSheet> createState() => _OnlineVideoSheetState();
 }
 
-class _OnlineVideoSheetState extends State<OnlineVideoSheet> {
+class _OnlineVideoSheetState extends ConsumerState<OnlineVideoSheet> {
   static const _service = OnlineVideoService();
   static const _historyStore = OnlineVideoHistoryStore();
 
@@ -71,7 +73,12 @@ class _OnlineVideoSheetState extends State<OnlineVideoSheet> {
       _error = null;
     });
     try {
-      final result = await _service.resolve(url, language: widget.language);
+      final cdnHost = ref.read(onlineVideoSettingsProvider).cdnHost;
+      final result = await _service.resolve(
+        url,
+        language: widget.language,
+        cdnHost: cdnHost,
+      );
       final history = await _historyStore.add(
         OnlineVideoHistoryEntry(
           url: result.pageUrl.toString(),
