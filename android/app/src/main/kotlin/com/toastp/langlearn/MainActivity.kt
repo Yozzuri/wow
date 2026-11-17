@@ -8,5 +8,6 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MediaSessionPlugin(this, flutterEngine.dartExecutor.binaryMessenger)
         CheckinWidgetBridge(this, flutterEngine.dartExecutor.binaryMessenger)
+        HttpBridge(flutterEngine.dartExecutor.binaryMessenger)
     }
 }

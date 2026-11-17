@@ -59,4 +59,32 @@ void main() {
     expect(analysis.senses.single.pos, 'v.');
     expect(analysis.senses.single.meaning, '跑');
   });
+
+  test('repairs fenced json with trailing commas and raw newlines', () {
+    final raw =
+        '\u0060\u0060\u0060json\n'
+        '{"classification":"lemma","lemma":"run",'
+        '"senses":[{"pos":"v.","meaning":"跑"},],'
+        '"detail":"第一行\n第二行"}\n'
+        '\u0060\u0060\u0060';
+    final analysis = parseWordAnalysis(
+      raw,
+      surface: 'run',
+      sentence: 'I run every day.',
+    );
+    expect(analysis.parseFailed, isFalse);
+    expect(analysis.senses.single.meaning, '跑');
+    expect(analysis.detailMarkdown, contains('第二行'));
+  });
+
+  test('flags a broken json instead of exposing the raw text', () {
+    const raw = '{"lemma":"run","senses":[';
+    final analysis = parseWordAnalysis(
+      raw,
+      surface: 'run',
+      sentence: 'I run every day.',
+    );
+    expect(analysis.parseFailed, isTrue);
+    expect(analysis.detailMarkdown, isEmpty);
+  });
 }

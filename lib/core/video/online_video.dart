@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/content_document.dart';
+import '../net/platform_http.dart';
 import '../subtitle/subtitle_parser.dart';
 
 class OnlineVideoException implements Exception {
@@ -241,14 +241,22 @@ class OnlineVideoService {
       );
     }
 
-    final response = await http
-        .get(uri, headers: const {'User-Agent': _browserUserAgent})
-        .timeout(const Duration(seconds: 25));
-    if (response.statusCode < 200 || response.statusCode >= 400) {
-      throw OnlineVideoException('页面请求失败：HTTP ${response.statusCode}');
+    final PlatformHttpResponse response;
+    try {
+      response = await PlatformHttp.get(
+        uri,
+        headers: const {'User-Agent': _browserUserAgent},
+      );
+    } on PlatformHttpException catch (error) {
+      throw OnlineVideoException(
+        '无法访问 ${uri.host}：$error。可能是网络或代理拦截，可换网络后重试。',
+      );
     }
-    final finalUri = response.request?.url ?? uri;
-    final html = utf8.decode(response.bodyBytes, allowMalformed: true);
+    if (response.status < 200 || response.status >= 400) {
+      throw OnlineVideoException('页面请求失败：HTTP ${response.status}');
+    }
+    final finalUri = response.finalUrl;
+    final html = utf8.decode(response.body, allowMalformed: true);
     if (finalUri.host.contains('bilibili.com') ||
         finalUri.host.contains('b23.tv')) {
       return _resolveBilibili(
@@ -291,7 +299,8 @@ class OnlineVideoService {
     }
     final headers = {
       'User-Agent': _browserUserAgent,
-      'Referer': 'https://www.bilibili.com/',
+      'Referer': pageUri.toString(),
+      'Origin': 'https://www.bilibili.com',
     };
     final view = await _getJson(
       'https://api.bilibili.com/x/web-interface/view',
@@ -326,6 +335,9 @@ class OnlineVideoService {
       'qn': '64',
       'fnval': '0',
       'fourk': '0',
+      'fnver': '0',
+      'platform': 'html5',
+      'high_quality': '1',
     }, headers);
     final playData = play['data'];
     String? media;
@@ -362,9 +374,16 @@ class OnlineVideoService {
       document = subtitle?.key;
       label = subtitle?.value;
     }
+    var mediaUri = Uri.parse(media);
+    if (mediaUri.scheme == 'http' &&
+        (mediaUri.host.contains('bilivideo.com') ||
+            mediaUri.host.contains('hdslb.com') ||
+            mediaUri.host.contains('bilibili.com'))) {
+      mediaUri = mediaUri.replace(scheme: 'https');
+    }
     return OnlineVideoResult(
       pageUrl: pageUri,
-      mediaUrl: Uri.parse(media),
+      mediaUrl: mediaUri,
       title: title,
       headers: headers,
       document: document,
@@ -410,13 +429,14 @@ class OnlineVideoService {
       final subtitleUri = url.startsWith('//')
           ? Uri.parse('https:$url')
           : Uri.parse(url);
-      final response = await http
-          .get(subtitleUri, headers: {'User-Agent': _browserUserAgent})
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode < 200 || response.statusCode >= 300) {
+      final response = await PlatformHttp.get(
+        subtitleUri,
+        headers: {'User-Agent': _browserUserAgent},
+      );
+      if (response.status < 200 || response.status >= 300) {
         return null;
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = jsonDecode(utf8.decode(response.body));
       final body = decoded is Map ? decoded['body'] : null;
       if (body is! List || body.isEmpty) {
         return null;
@@ -458,20 +478,18 @@ class OnlineVideoService {
         'rest.opensubtitles.org',
         '/search/query-${Uri.encodeComponent(title.trim())}/sublanguageid-$code',
       );
-      final response = await http
-          .get(
-            uri,
-            headers: const {
-              'User-Agent': 'TemporaryUserAgent',
-              'X-User-Agent': 'TemporaryUserAgent',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 20));
-      if (response.statusCode != 200) {
+      final response = await PlatformHttp.get(
+        uri,
+        headers: const {
+          'User-Agent': 'TemporaryUserAgent',
+          'X-User-Agent': 'TemporaryUserAgent',
+          'Accept': 'application/json',
+        },
+      );
+      if (response.status != 200) {
         return null;
       }
-      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      final decoded = jsonDecode(utf8.decode(response.body));
       if (decoded is! List) {
         return null;
       }
@@ -480,19 +498,17 @@ class OnlineVideoService {
         if (link == null || !link.startsWith('http')) {
           continue;
         }
-        final download = await http
-            .get(
-              Uri.parse(link),
-              headers: const {
-                'User-Agent': 'TemporaryUserAgent',
-                'X-User-Agent': 'TemporaryUserAgent',
-              },
-            )
-            .timeout(const Duration(seconds: 25));
-        if (download.statusCode != 200) {
+        final download = await PlatformHttp.get(
+          Uri.parse(link),
+          headers: const {
+            'User-Agent': 'TemporaryUserAgent',
+            'X-User-Agent': 'TemporaryUserAgent',
+          },
+        );
+        if (download.status != 200) {
           continue;
         }
-        final bytes = download.bodyBytes;
+        final bytes = download.body;
         List<int> textBytes = bytes;
         if (bytes.length > 2 && bytes[0] == 0x1f && bytes[1] == 0x8b) {
           textBytes = gzip.decode(bytes);
@@ -529,13 +545,11 @@ class OnlineVideoService {
     Map<String, String> headers,
   ) async {
     final uri = Uri.https(Uri.parse(url).host, Uri.parse(url).path, query);
-    final response = await http
-        .get(uri, headers: headers)
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw OnlineVideoException('接口请求失败：HTTP ${response.statusCode}');
+    final response = await PlatformHttp.get(uri, headers: headers);
+    if (response.status != 200) {
+      throw OnlineVideoException('接口请求失败：HTTP ${response.status}');
     }
-    final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+    final decoded = jsonDecode(utf8.decode(response.body));
     if (decoded is! Map) {
       throw OnlineVideoException('接口返回格式异常');
     }

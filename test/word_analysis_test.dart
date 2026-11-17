@@ -26,6 +26,7 @@ void main() {
     );
     expect(analysis.lemma, '食べる');
     expect(analysis.lemmaSentence, '毎日ご飯を食べる。');
-    expect(analysis.detailMarkdown, '这是一段普通回答');
+    expect(analysis.parseFailed, isTrue);
+    expect(analysis.detailMarkdown, isEmpty);
   });
 }

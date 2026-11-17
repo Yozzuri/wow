@@ -49,6 +49,7 @@ class WordAnalysis {
     this.usage = '',
     this.examples = const [],
     this.detailMarkdown = '',
+    this.parseFailed = false,
   });
 
   final String surface;
@@ -66,6 +67,7 @@ class WordAnalysis {
   final String usage;
   final List<String> examples;
   final String detailMarkdown;
+  final bool parseFailed;
 
   String? get reading => surfaceReading ?? lemmaReading;
   bool get isIndependent => kind == WordFormKind.independent;
@@ -313,7 +315,7 @@ class WordAnalyzer {
     }
     final raw = await AiClient(config).chat(
       messages: _messages(word, sentence, language, lemmaHint),
-      maxTokens: 2000,
+      maxTokens: 3000,
     );
     final analysis = parseWordAnalysis(
       raw,
@@ -321,7 +323,9 @@ class WordAnalyzer {
       sentence: sentence,
       lemmaHint: lemmaHint,
     );
-    await _cache.save(analysis, language, sentence);
+    if (!analysis.parseFailed) {
+      await _cache.save(analysis, language, sentence);
+    }
     return analysis;
   }
 
@@ -387,78 +391,198 @@ WordAnalysis parseWordAnalysis(
   required String sentence,
   String? lemmaHint,
 }) {
-  var text = raw.trim();
-  if (text.startsWith(_fence)) {
-    final newline = text.indexOf('\n');
-    if (newline >= 0) text = text.substring(newline + 1);
-    if (text.endsWith(_fence)) text = text.substring(0, text.length - 3);
-  }
-  final start = text.indexOf('{');
-  final end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) {
-    return _fallback(raw, surface, sentence, lemmaHint);
-  }
-  try {
-    final decoded = jsonDecode(text.substring(start, end + 1));
-    if (decoded is! Map) return _fallback(raw, surface, sentence, lemmaHint);
-    final map = decoded.cast<String, dynamic>();
-    final rawLemma = (map['lemma'] as String?)?.trim();
-    final kindName = (map['classification'] as String?)?.toLowerCase();
-    var kind = switch (kindName) {
-      'independent' => WordFormKind.independent,
-      'inflected' => WordFormKind.inflected,
-      'lemma' => WordFormKind.lemma,
-      _ =>
-        (rawLemma != null && rawLemma.isNotEmpty && rawLemma != surface)
-            ? WordFormKind.inflected
-            : WordFormKind.lemma,
-    };
-    var lemma = (rawLemma == null || rawLemma.isEmpty)
-        ? (lemmaHint ?? surface)
-        : rawLemma;
-    if (kind == WordFormKind.independent) lemma = surface;
-    if (kind == WordFormKind.lemma && lemma != surface) {
-      kind = WordFormKind.inflected;
+  final text = raw.replaceAll('\uFEFF', '').trim();
+  for (final candidate in _jsonCandidates(text)) {
+    final repaired = _escapeControlCharsInStrings(candidate)
+        .replaceAllMapped(RegExp(r',\s*([}\]])'), (match) => match.group(1)!);
+    try {
+      final decoded = jsonDecode(repaired);
+      Map<String, dynamic>? map;
+      if (decoded is Map) {
+        map = decoded.cast<String, dynamic>();
+      } else if (decoded is List &&
+          decoded.isNotEmpty &&
+          decoded.first is Map) {
+        map = (decoded.first as Map).cast<String, dynamic>();
+      }
+      if (map == null) {
+        continue;
+      }
+      final analysis = _analysisFromMap(map, surface, sentence, lemmaHint);
+      if (analysis != null) {
+        return analysis;
+      }
+    } catch (_) {
+      // Try the next balanced JSON candidate.
     }
-    final senses = _parseSenses(map);
-    final forms = _parseForms(map);
-    final inflection = (map['inflection'] as Map?)?.cast<String, dynamic>();
-    final changed = kind == WordFormKind.inflected;
-    final examples =
-        (map['examples'] as List?)?.whereType<String>().toList() ?? const [];
-    return WordAnalysis(
-      surface: surface,
-      lemma: lemma,
-      kind: kind,
-      surfaceReading:
-          (map['surfaceReading'] as String?)?.trim() ??
-          (map['reading'] as String?)?.trim(),
-      lemmaReading: (map['lemmaReading'] as String?)?.trim(),
-      relation: (map['relation'] as String? ?? '').trim(),
-      senses: senses.isEmpty && (map['meaning'] as String? ?? '').isNotEmpty
-          ? [
-              WordSense(
-                pos: (map['pos'] as String? ?? '').trim(),
-                meaning: (map['meaning'] as String).trim(),
-              ),
-            ]
-          : senses,
-      forms: forms,
-      inflectionChanged: changed,
-      inflectionSummary: changed
-          ? (inflection?['summary'] as String? ?? '$surface → $lemma').trim()
-          : '',
-      inflectionExplanation: changed
-          ? (inflection?['explanation'] as String? ?? '').trim()
-          : '',
-      lemmaSentence: (map['lemmaSentence'] as String?)?.trim(),
-      usage: (map['usage'] as String? ?? '').trim(),
-      examples: examples,
-      detailMarkdown: (map['detail'] as String? ?? '').trim(),
-    );
-  } catch (_) {
-    return _fallback(raw, surface, sentence, lemmaHint);
   }
+  return _fallback(raw, surface, sentence, lemmaHint);
+}
+
+WordAnalysis? _analysisFromMap(
+  Map<String, dynamic> map,
+  String surface,
+  String sentence,
+  String? lemmaHint,
+) {
+  final rawLemma = (map['lemma'] as String?)?.trim();
+  final kindName = (map['classification'] as String?)?.toLowerCase();
+  var kind = switch (kindName) {
+    'independent' => WordFormKind.independent,
+    'inflected' => WordFormKind.inflected,
+    'lemma' => WordFormKind.lemma,
+    _ =>
+      (rawLemma != null && rawLemma.isNotEmpty && rawLemma != surface)
+          ? WordFormKind.inflected
+          : WordFormKind.lemma,
+  };
+  var lemma = (rawLemma == null || rawLemma.isEmpty)
+      ? (lemmaHint ?? surface)
+      : rawLemma;
+  if (kind == WordFormKind.independent) {
+    lemma = surface;
+  }
+  if (kind == WordFormKind.lemma && lemma != surface) {
+    kind = WordFormKind.inflected;
+  }
+  final senses = _parseSenses(map);
+  final legacyMeaning = (map['meaning'] as String? ?? '').trim();
+  if (senses.isEmpty && legacyMeaning.isEmpty) {
+    return null;
+  }
+  final forms = _parseForms(map);
+  final inflection = (map['inflection'] as Map?)?.cast<String, dynamic>();
+  final changed = kind == WordFormKind.inflected;
+  final examples =
+      (map['examples'] as List?)?.whereType<String>().toList() ?? const [];
+  return WordAnalysis(
+    surface: surface,
+    lemma: lemma,
+    kind: kind,
+    surfaceReading:
+        (map['surfaceReading'] as String?)?.trim() ??
+        (map['reading'] as String?)?.trim(),
+    lemmaReading: (map['lemmaReading'] as String?)?.trim(),
+    relation: (map['relation'] as String? ?? '').trim(),
+    senses: senses.isEmpty
+        ? [
+            WordSense(
+              pos: (map['pos'] as String? ?? '').trim(),
+              meaning: legacyMeaning,
+            ),
+          ]
+        : senses,
+    forms: forms,
+    inflectionChanged: changed,
+    inflectionSummary: changed
+        ? (inflection?['summary'] as String? ?? '$surface → $lemma').trim()
+        : '',
+    inflectionExplanation: changed
+        ? (inflection?['explanation'] as String? ?? '').trim()
+        : '',
+    lemmaSentence: (map['lemmaSentence'] as String?)?.trim(),
+    usage: (map['usage'] as String? ?? '').trim(),
+    examples: examples,
+    detailMarkdown: (map['detail'] as String? ?? '').trim(),
+  );
+}
+
+Iterable<String> _jsonCandidates(String text) sync* {
+  final cleaned = text.replaceAll(RegExp(_fence + r'[a-zA-Z]*'), '');
+  var index = 0;
+  while (index < cleaned.length) {
+    if (cleaned[index] != '{') {
+      index++;
+      continue;
+    }
+    final start = index;
+    var depth = 0;
+    var inString = false;
+    var escape = false;
+    var closed = false;
+    for (; index < cleaned.length; index++) {
+      final char = cleaned[index];
+      if (inString) {
+        if (escape) {
+          escape = false;
+          continue;
+        }
+        if (char == '\\') {
+          escape = true;
+          continue;
+        }
+        if (char == '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char == '"') {
+        inString = true;
+        continue;
+      }
+      if (char == '{') {
+        depth++;
+      } else if (char == '}') {
+        depth--;
+        if (depth == 0) {
+          index++;
+          closed = true;
+          break;
+        }
+      }
+    }
+    if (closed) {
+      yield cleaned.substring(start, index);
+    }
+  }
+}
+
+String _escapeControlCharsInStrings(String input) {
+  final buffer = StringBuffer();
+  var inString = false;
+  var escape = false;
+  for (var i = 0; i < input.length; i++) {
+    final char = input[i];
+    if (inString) {
+      if (escape) {
+        buffer.write(char);
+        escape = false;
+        continue;
+      }
+      if (char == '\\') {
+        buffer.write(char);
+        escape = true;
+        continue;
+      }
+      if (char == '"') {
+        inString = false;
+        buffer.write(char);
+        continue;
+      }
+      if (char == '\n') {
+        buffer.write('\\n');
+        continue;
+      }
+      if (char == '\r') {
+        buffer.write('\\r');
+        continue;
+      }
+      if (char == '\t') {
+        buffer.write('\\t');
+        continue;
+      }
+      if (char.codeUnitAt(0) < 0x20) {
+        continue;
+      }
+      buffer.write(char);
+      continue;
+    }
+    if (char == '"') {
+      inString = true;
+    }
+    buffer.write(char);
+  }
+  return buffer.toString();
 }
 
 List<WordSense> _parseSenses(Map<String, dynamic> map) {
@@ -510,7 +634,7 @@ WordAnalysis _fallback(
     inflectionChanged: changed,
     inflectionSummary: changed ? '$surface → $lemma' : '',
     lemmaSentence: _replaceWord(sentence, surface, lemma),
-    detailMarkdown: raw.trim(),
+    parseFailed: true,
   );
 }
 

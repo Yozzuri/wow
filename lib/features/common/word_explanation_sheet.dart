@@ -231,6 +231,22 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                       style: TextStyle(color: theme.colorScheme.error),
                     ),
                   ),
+                if (analysis?.parseFailed == true)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'AI 返回的解析格式异常，已显示本地词条信息。点右上角刷新可重新生成。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onErrorContainer,
+                      ),
+                    ),
+                  ),
                 if (senses.isNotEmpty) ...[
                   Text('释义', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 6),

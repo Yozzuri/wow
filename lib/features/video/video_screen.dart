@@ -1,15 +1,19 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../core/ai/ai_settings.dart';
 import '../../core/ai/subtitle_analyzer.dart';
 import '../../core/models/content_document.dart';
+import '../../core/net/platform_http.dart';
+import '../../core/video/online_video.dart';
 import '../../core/reading/reading_book.dart';
 import '../../core/storage/content_store.dart';
 import '../../core/subtitle/subtitle_parser.dart';
@@ -96,11 +100,22 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     setState(() => _busy = true);
     VideoPlayerController? next;
     try {
-      next = VideoPlayerController.networkUrl(
-        result.mediaUrl,
-        httpHeaders: result.headers,
-      );
-      await next.initialize();
+      try {
+        next = VideoPlayerController.networkUrl(
+          result.mediaUrl,
+          httpHeaders: result.headers,
+        );
+        await next.initialize();
+      } catch (_) {
+        await next?.dispose();
+        next = null;
+        if (mounted) {
+          _showMessage('在线播放失败，正在缓存到本地后重试…');
+        }
+        final file = await _cacheOnlineVideo(result);
+        next = VideoPlayerController.file(file);
+        await next.initialize();
+      }
       await _controller?.dispose();
       await next.setLooping(false);
       await next.setPlaybackSpeed(_speed);
@@ -126,13 +141,42 @@ class _VideoScreenState extends ConsumerState<VideoScreen> {
     } catch (error) {
       await next?.dispose();
       if (mounted) {
-        _showMessage('无法播放在线视频：$error');
+        _showMessage('无法播放在线视频（${result.mediaUrl.host}）：$error');
       }
     } finally {
       if (mounted) {
         setState(() => _busy = false);
       }
     }
+  }
+
+  Future<File> _cacheOnlineVideo(OnlineVideoResult result) async {
+    final temp = await getTemporaryDirectory();
+    final dir = Directory('${temp.path}/online_video');
+    await dir.create(recursive: true);
+    final key = sha1.convert(utf8.encode(result.mediaUrl.toString())).toString();
+    final file = File('${dir.path}/$key.mp4');
+    if (await file.exists() && await file.length() > 1024) {
+      return file;
+    }
+    if (await file.exists()) {
+      await file.delete();
+    }
+    final cutoff = DateTime.now().subtract(const Duration(days: 2));
+    await for (final entity in dir.list()) {
+      if (entity is File) {
+        final stat = await entity.stat();
+        if (stat.modified.isBefore(cutoff)) {
+          await entity.delete();
+        }
+      }
+    }
+    await PlatformHttp.download(
+      result.mediaUrl,
+      file.path,
+      headers: result.headers,
+    );
+    return file;
   }
 
   Future<void> _pickSubtitle() async {
