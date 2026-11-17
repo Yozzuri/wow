@@ -5,10 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/ai/ai_settings.dart';
+import '../../core/ai/chunk_cache.dart';
+import '../../core/ai/phrase_extractor.dart';
+import '../../core/ai/segmentation_service.dart';
 import '../../core/models/content_document.dart';
 import '../../core/reading/reading_book.dart';
 import '../../core/reading/reading_translation.dart';
-import '../../core/text/tokenizer.dart';
+import '../../core/text/tokenizer_settings.dart';
 import '../common/interactive_line.dart';
 import '../common/sentence_explanation_sheet.dart';
 import '../common/word_explanation_sheet.dart';
@@ -32,6 +35,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
   double _scrimOpacity = 0.7;
   ReadingTranslationController? _translation;
   final ScrollController _scrollController = ScrollController();
+  final Map<String, List<ContentPhrase>> _phrases = {};
+  final Set<String> _phrasePending = {};
+  final Set<String> _phraseFailed = {};
+  final Map<String, List<String>> _segmented = {};
+  final Set<String> _segmenting = {};
+  final Set<String> _segmentFailed = {};
 
   ReadingBook get _book => widget.book;
   String get _language => _book.language;
@@ -41,6 +50,9 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     super.initState();
     _loadScrim();
     _startTranslation();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadVisibleSegments();
+    });
   }
 
   @override
@@ -113,6 +125,122 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     showSentenceExplanation(context, sentence: sentence, language: _language);
   }
 
+  Future<void> _loadSegments(String paragraph) async {
+    if (_segmenting.contains(paragraph) ||
+        _segmented.containsKey(paragraph) ||
+        _segmentFailed.contains(paragraph)) {
+      return;
+    }
+    final config = await ref.read(aiConfigProvider.future);
+    if (!mounted || !config.isConfigured) {
+      return;
+    }
+    setState(() => _segmenting.add(paragraph));
+    try {
+      final words = await const SegmentationService().segment(
+        config: config,
+        text: paragraph,
+        language: _language,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        if (words.isNotEmpty) {
+          _segmented[paragraph] = words;
+        } else {
+          _segmentFailed.add(paragraph);
+        }
+        _segmenting.remove(paragraph);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _segmentFailed.add(paragraph);
+        _segmenting.remove(paragraph);
+      });
+    }
+  }
+
+  Future<void> _loadVisibleSegments() async {
+    if (ref.read(tokenizerModeProvider).mode != TokenizerMode.ai) {
+      return;
+    }
+    final paragraphs = _paragraphs.take(12).toList();
+    await runWithConcurrency(
+      paragraphs,
+      2,
+      (paragraph, _) => _loadSegments(paragraph),
+    );
+  }
+
+  Future<void> _loadPhrases(String paragraph, {bool force = false}) async {
+    if (_phrasePending.contains(paragraph)) {
+      return;
+    }
+    if (!force &&
+        (_phrases.containsKey(paragraph) || _phraseFailed.contains(paragraph))) {
+      return;
+    }
+    final config = await ref.read(aiConfigProvider.future);
+    if (!mounted || !config.isConfigured) {
+      return;
+    }
+    setState(() {
+      _phrasePending.add(paragraph);
+      _phraseFailed.remove(paragraph);
+    });
+    try {
+      final phrases = await const PhraseExtractor().extract(
+        config: config,
+        paragraph: paragraph,
+        language: _language,
+        force: force,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _phrases[paragraph] = phrases;
+        _phrasePending.remove(paragraph);
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _phraseFailed.add(paragraph);
+        _phrasePending.remove(paragraph);
+      });
+    }
+  }
+
+  Future<void> _loadVisiblePhrases() async {
+    if (_mode != LookupMode.phrase) {
+      return;
+    }
+    final paragraphs = _paragraphs.take(12).toList();
+    await runWithConcurrency(
+      paragraphs,
+      2,
+      (paragraph, _) => _loadPhrases(paragraph),
+    );
+  }
+
+  void _goToChapter(int index) {
+    if (index < 0 || index >= _chapters.length) {
+      return;
+    }
+    setState(() => _chapterIndex = index);
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+    _loadVisiblePhrases();
+    _loadVisibleSegments();
+  }
+
   void _lookupPhrase(String phrase, String sentence) {
     showWordExplanation(
       context,
@@ -136,30 +264,6 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     return chunks.isEmpty ? [paragraph] : chunks;
   }
 
-  List<String> _phraseChunks(String paragraph) {
-    final clauses = paragraph
-        .split(RegExp(r'(?<=[,;:，；：])\s*'))
-        .map((phrase) => phrase.trim())
-        .where((phrase) => phrase.isNotEmpty)
-        .toList();
-    if (clauses.length > 1) {
-      return clauses;
-    }
-    final words = textChunks(paragraph, language: _language)
-        .where((chunk) => chunk.word != null)
-        .map((chunk) => chunk.text.trim())
-        .toList();
-    if (words.length <= 3) {
-      return [paragraph];
-    }
-    final result = <String>[];
-    for (var i = 0; i < words.length; i += 3) {
-      final end = (i + 3).clamp(0, words.length);
-      result.add(words.sublist(i, end).join(' '));
-    }
-    return result;
-  }
-
   Widget _buildParagraph(
     String paragraph,
     Color textColor,
@@ -171,12 +275,15 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       color: textColor,
     );
     switch (_mode) {
-      case LookupMode.word:
+      case LookupMode.word || LookupMode.phrase:
         return InteractiveLine(
           text: paragraph,
           onWordTap: _lookupWord,
           textAlign: TextAlign.left,
           language: _language,
+          chunks: ref.read(tokenizerModeProvider).mode == TokenizerMode.ai
+              ? _segmented[paragraph]
+              : null,
           baseStyle: baseStyle,
           wordStyle: baseStyle?.copyWith(
             color: textColor,
@@ -197,23 +304,120 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               ),
           ],
         );
-      case LookupMode.phrase:
-        return Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final phrase in _phraseChunks(paragraph))
-              ActionChip(
-                label: Text(phrase.replaceAll('\n', ' ')),
-                onPressed: () => _lookupPhrase(phrase, paragraph),
-                visualDensity: VisualDensity.compact,
-                backgroundColor: textColor.withValues(alpha: 0.08),
-                labelStyle: TextStyle(color: textColor),
-                side: BorderSide(color: secondaryColor.withValues(alpha: 0.3)),
-              ),
-          ],
-        );
     }
+  }
+
+  Widget _buildPhraseRow(
+    String paragraph,
+    Color textColor,
+    Color secondaryColor,
+  ) {
+    final theme = Theme.of(context);
+    final phrases = _phrases[paragraph];
+    if (_phrasePending.contains(paragraph)) {
+      return Row(
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'AI 提取短语中…',
+            style: theme.textTheme.bodySmall?.copyWith(color: secondaryColor),
+          ),
+        ],
+      );
+    }
+    if (phrases == null || phrases.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: () => _loadPhrases(paragraph, force: true),
+          icon: const Icon(Icons.auto_awesome, size: 16),
+          label: Text(
+            _phraseFailed.contains(paragraph) ? '重新提取短语' : 'AI 提取短语',
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: textColor,
+            visualDensity: VisualDensity.compact,
+          ),
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final phrase in phrases)
+          ActionChip(
+            label: Text(phrase.text),
+            tooltip: phrase.meaning ?? phrase.usage,
+            onPressed: () =>
+                _showPhraseDetails(phrase, paragraph, textColor, secondaryColor),
+            visualDensity: VisualDensity.compact,
+            backgroundColor: textColor.withValues(alpha: 0.08),
+            labelStyle: TextStyle(color: textColor),
+            side: BorderSide(color: secondaryColor.withValues(alpha: 0.3)),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _showPhraseDetails(
+    ContentPhrase phrase,
+    String paragraph,
+    Color textColor,
+    Color secondaryColor,
+  ) async {
+    final theme = Theme.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(phrase.text, style: theme.textTheme.headlineSmall),
+              if ((phrase.example ?? '').isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('原文：${phrase.example}', style: theme.textTheme.bodyMedium),
+              ],
+              if ((phrase.meaning ?? '').isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(phrase.meaning!, style: theme.textTheme.bodyLarge),
+              ],
+              if ((phrase.usage ?? '').isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  phrase.usage!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: secondaryColor,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.tonalIcon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    _lookupPhrase(phrase.example ?? phrase.text, paragraph);
+                  },
+                  icon: const Icon(Icons.search),
+                  label: const Text('查看例句中的词'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _showScrimSheet() async {
@@ -276,7 +480,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
       ),
     );
     if (selected != null && mounted) {
-      setState(() => _chapterIndex = selected);
+      _goToChapter(selected);
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0);
       }
@@ -293,6 +497,12 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
     final paragraphs = _paragraphs;
     final translation = _translation;
     final theme = Theme.of(context);
+    ref.watch(tokenizerModeProvider);
+    ref.listen<TokenizerSettings>(tokenizerModeProvider, (previous, next) {
+      if (next.mode == TokenizerMode.ai) {
+        _loadVisibleSegments();
+      }
+    });
     return Scaffold(
       appBar: AppBar(
         title: Text(_book.title),
@@ -334,12 +544,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                         tooltip: '上一章',
                         onPressed: _chapterIndex == 0
                             ? null
-                            : () {
-                                setState(() => _chapterIndex--);
-                                if (_scrollController.hasClients) {
-                                  _scrollController.jumpTo(0);
-                                }
-                              },
+                            : () => _goToChapter(_chapterIndex - 1),
                         icon: Icon(Icons.chevron_left, color: secondaryColor),
                       ),
                       Expanded(
@@ -357,12 +562,7 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                         tooltip: '下一章',
                         onPressed: _chapterIndex == _chapters.length - 1
                             ? null
-                            : () {
-                                setState(() => _chapterIndex++);
-                                if (_scrollController.hasClients) {
-                                  _scrollController.jumpTo(0);
-                                }
-                              },
+                            : () => _goToChapter(_chapterIndex + 1),
                         icon: Icon(Icons.chevron_right, color: secondaryColor),
                       ),
                     ],
@@ -405,6 +605,14 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: secondaryColor.withValues(alpha: 0.45),
                               ),
+                            ),
+                          ],
+                          if (_mode == LookupMode.phrase) ...[
+                            const SizedBox(height: 8),
+                            _buildPhraseRow(
+                              paragraph,
+                              textColor,
+                              secondaryColor,
                             ),
                           ],
                           if (translation != null &&
@@ -452,8 +660,10 @@ class _ReaderPageState extends ConsumerState<ReaderPage> {
               ),
             ],
             selected: {_mode},
-            onSelectionChanged: (selection) =>
-                setState(() => _mode = selection.first),
+            onSelectionChanged: (selection) {
+              setState(() => _mode = selection.first);
+              _loadVisiblePhrases();
+            },
           ),
         ),
       ),

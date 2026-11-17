@@ -6,11 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/ai/ai_settings.dart';
 import '../../core/vocab/checkin_store.dart';
 import '../../core/vocab/daily_tasks.dart';
 import '../../core/vocab/learning_plan.dart';
+import '../../core/vocab/vocab_preanalysis.dart';
 import '../../core/vocab/vocab_store.dart';
 import '../../core/vocab/wordbook.dart';
+import '../../core/vocab/wordbook_enricher.dart';
 import 'learn_session_page.dart';
 import 'wordbook_import_screen.dart';
 
@@ -46,6 +49,142 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
       _wordbooks = wordbooks;
       _loading = false;
     });
+  }
+
+  Future<void> _preAnalyzeAll() async {
+    final config = await ref.read(aiConfigProvider.future);
+    if (!mounted) {
+      return;
+    }
+    if (!config.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在设置中配置 AI 接口')),
+      );
+      return;
+    }
+    if (_entries.isEmpty) {
+      return;
+    }
+    final progress = ValueNotifier<(int, int)>((0, _entries.length));
+    var dialogOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('预解析生词'),
+        content: ValueListenableBuilder<(int, int)>(
+          valueListenable: progress,
+          builder: (context, value, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(
+                value: value.$2 == 0 ? null : value.$1 / value.$2,
+              ),
+              const SizedBox(height: 12),
+              Text('${value.$1} / ${value.$2}'),
+            ],
+          ),
+        ),
+      ),
+    ).whenComplete(() => dialogOpen = false);
+    try {
+      final count = await const VocabPreAnalyzer().analyze(
+        config: config,
+        entries: _entries,
+        onProgress: (value, all) => progress.value = (value, all),
+      );
+      progress.dispose();
+      if (!mounted) {
+        return;
+      }
+      if (dialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('预解析完成：$count 个词条')),
+      );
+    } catch (error) {
+      progress.dispose();
+      if (!mounted) {
+        return;
+      }
+      if (dialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('预解析失败：$error')));
+    }
+  }
+
+  Future<void> _enrichWordbook(Wordbook book) async {
+    final config = await ref.read(aiConfigProvider.future);
+    if (!mounted) {
+      return;
+    }
+    if (!config.isConfigured) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在设置中配置 AI 接口')),
+      );
+      return;
+    }
+    if (book.entries.isEmpty) {
+      return;
+    }
+    final progress = ValueNotifier<(int, int)>((0, book.entries.length));
+    var dialogOpen = true;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('AI 重写词书'),
+        content: ValueListenableBuilder<(int, int)>(
+          valueListenable: progress,
+          builder: (context, value, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              LinearProgressIndicator(
+                value: value.$2 == 0 ? null : value.$1 / value.$2,
+              ),
+              const SizedBox(height: 12),
+              Text('${value.$1} / ${value.$2}'),
+            ],
+          ),
+        ),
+      ),
+    ).whenComplete(() => dialogOpen = false);
+    try {
+      final enriched = await const WordbookEnricher().enrich(
+        config: config,
+        book: book,
+        onProgress: (value, all) => progress.value = (value, all),
+      );
+      progress.dispose();
+      if (!mounted) {
+        return;
+      }
+      if (dialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      await _wordbookStore.save(enriched);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('词书已重写：${enriched.name}')),
+        );
+      }
+    } catch (error) {
+      progress.dispose();
+      if (!mounted) {
+        return;
+      }
+      if (dialogOpen) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('词书重写失败：$error')));
+    }
   }
 
   Future<void> _startDaily(DailyTasks tasks) async {
@@ -151,12 +290,18 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
     for (final entry in book.entries) {
       final inserted = await store.addToken(
         word: entry.word,
-        lemma: entry.word,
-        pos: entry.pos,
-        meaning: entry.meaning.isEmpty ? entry.usage : entry.meaning,
-        sentence: entry.example.isNotEmpty ? entry.example : entry.usage,
-        reading: entry.reading,
-        inflection: entry.pitchAccent == null
+        lemma: entry.headword,
+        pos: entry.displayPos,
+        meaning: entry.displayMeaning.isEmpty
+            ? entry.usage
+            : entry.displayMeaning,
+        sentence: entry.primaryExample.isNotEmpty
+            ? entry.primaryExample
+            : entry.usage,
+        reading: entry.displayReading,
+        inflection: entry.relation.isNotEmpty
+            ? entry.relation
+            : entry.pitchAccent == null
             ? null
             : '音调：${entry.pitchAccent}',
         language: book.language,
@@ -221,6 +366,7 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
                   : () => _startExtra(tasks),
               onCheckIn: _checkIn,
               onOpenPlan: () => context.go('/settings'),
+              onPreAnalyze: _preAnalyzeAll,
             ),
             _WordbookTab(
               entries: _entries,
@@ -235,6 +381,7 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
               onImportJson: _importJsonWordbook,
               onDelete: _deleteWordbook,
               onStudy: _studyWordbook,
+              onEnrich: _enrichWordbook,
             ),
           ],
         ),
@@ -253,6 +400,7 @@ class _LearnTab extends StatelessWidget {
     required this.onContinueReview,
     required this.onCheckIn,
     required this.onOpenPlan,
+    required this.onPreAnalyze,
   });
 
   final DailyTasks tasks;
@@ -263,6 +411,7 @@ class _LearnTab extends StatelessWidget {
   final VoidCallback? onContinueReview;
   final VoidCallback onCheckIn;
   final VoidCallback onOpenPlan;
+  final VoidCallback onPreAnalyze;
 
   @override
   Widget build(BuildContext context) {
@@ -420,6 +569,16 @@ class _LearnTab extends StatelessWidget {
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: onOpenPlan,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.auto_awesome),
+            title: const Text('预解析生词'),
+            subtitle: const Text('提前缓存 AI 解析，学习时直接显示'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: onPreAnalyze,
           ),
         ),
         const SizedBox(height: 12),
@@ -615,6 +774,7 @@ class _ImportTab extends StatelessWidget {
     required this.onImportJson,
     required this.onDelete,
     required this.onStudy,
+    required this.onEnrich,
   });
 
   final List<Wordbook> wordbooks;
@@ -622,6 +782,7 @@ class _ImportTab extends StatelessWidget {
   final VoidCallback onImportJson;
   final void Function(Wordbook book) onDelete;
   final void Function(Wordbook book) onStudy;
+  final void Function(Wordbook book) onEnrich;
 
   @override
   Widget build(BuildContext context) {
@@ -665,6 +826,11 @@ class _ImportTab extends StatelessWidget {
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  IconButton(
+                    tooltip: 'AI 重写词书',
+                    onPressed: () => onEnrich(book),
+                    icon: const Icon(Icons.auto_awesome),
+                  ),
                   IconButton(
                     tooltip: '加入学习',
                     onPressed: () => onStudy(book),

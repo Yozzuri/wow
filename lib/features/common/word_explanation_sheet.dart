@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/ai/ai_settings.dart';
+import '../../core/ai/segmentation_service.dart';
 import '../../core/ai/word_analysis.dart';
 import '../../core/models/content_document.dart';
+import '../../core/text/tokenizer.dart';
 import '../../core/vocab/vocab_store.dart';
 import 'ai_markdown.dart';
 
@@ -33,23 +35,26 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
   String? _error;
   bool _loading = true;
   int _requestId = 0;
+  late String _surface = widget.word;
+  List<String> _segments = const [];
+  bool _segmenting = false;
 
   ContentToken? get _token => widget.token;
 
   WordAnalysis _localFallback() {
     final hint = (_token?.lemma ?? '').trim();
-    final lemma = hint.isEmpty ? widget.word : hint;
-    final changed = lemma != widget.word;
+    final lemma = hint.isEmpty ? _surface : hint;
+    final changed = lemma != _surface;
     final pos = (_token?.pos ?? '').trim();
     final meaning = (_token?.meaning ?? '').trim();
     return WordAnalysis(
-      surface: widget.word,
+      surface: _surface,
       lemma: lemma,
       kind: changed ? WordFormKind.inflected : WordFormKind.lemma,
       inflectionChanged: changed,
-      inflectionSummary: changed ? '${widget.word} → $lemma' : '',
+      inflectionSummary: changed ? '$_surface → $lemma' : '',
       lemmaSentence: changed
-          ? widget.sentence.replaceFirst(widget.word, lemma)
+          ? widget.sentence.replaceFirst(_surface, lemma)
           : widget.sentence,
       senses: meaning.isEmpty
           ? const []
@@ -83,10 +88,12 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
       }
       final result = await const WordAnalyzer().analyze(
         config: config,
-        word: widget.word,
+        word: _surface,
         sentence: widget.sentence,
         language: widget.language,
-        lemmaHint: _analysis?.lemma ?? _token?.lemma,
+        lemmaHint: _surface == widget.word
+            ? (_analysis?.lemma ?? _token?.lemma)
+            : null,
         force: force,
       );
       if (mounted && requestId == _requestId) {
@@ -111,7 +118,7 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
     final added = await ref
         .read(vocabStoreProvider)
         .addToken(
-          word: analysis.surface,
+          word: _surface,
           lemma: analysis.lemma,
           pos: analysis.pos,
           meaning: analysis.meaningSummary.isNotEmpty
@@ -143,6 +150,54 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
     WordFormKind.independent => '独立派生词',
   };
 
+  Future<void> _resegment() async {
+    if (_segmenting) {
+      return;
+    }
+    setState(() => _segmenting = true);
+    try {
+      final config = await ref.read(aiConfigProvider.future);
+      if (!config.isConfigured) {
+        throw StateError('请先在设置中配置 AI 接口');
+      }
+      final words = await const SegmentationService().segment(
+        config: config,
+        text: widget.sentence,
+        language: widget.language,
+        force: true,
+      );
+      if (words.isEmpty) {
+        throw StateError('AI 没有返回可用的拆分');
+      }
+      if (mounted) {
+        setState(() {
+          _segments = words;
+          _segmenting = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _segmenting = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('重新拆分失败：$error')));
+      }
+    }
+  }
+
+  void _selectWord(String word) {
+    if (word == _surface) {
+      return;
+    }
+    setState(() {
+      _surface = word;
+      _analysis = null;
+      _error = null;
+      _segments = const [];
+    });
+    _load(force: true);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -168,7 +223,7 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                 children: [
                   Expanded(
                     child: Text(
-                      widget.word,
+                      _surface,
                       style: theme.textTheme.headlineSmall,
                     ),
                   ),
@@ -330,6 +385,35 @@ class _WordExplanationSheetState extends ConsumerState<WordExplanationSheet> {
                 if ((analysis?.detailMarkdown ?? '').isNotEmpty)
                   AiMarkdown(data: analysis!.detailMarkdown),
               ],
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: _segmenting ? null : _resegment,
+                    icon: _segmenting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.call_split, size: 18),
+                    label: Text(_segmenting ? '重新拆分中…' : '重新拆分这句'),
+                  ),
+                ],
+              ),
+              if (_segments.isNotEmpty)
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final word in _segments.where(hasWordContent))
+                      ActionChip(
+                        label: Text(word.trim()),
+                        onPressed: () => _selectWord(word.trim()),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
+                ),
               const SizedBox(height: 16),
               Row(
                 children: [

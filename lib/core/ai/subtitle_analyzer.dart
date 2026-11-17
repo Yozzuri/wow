@@ -209,10 +209,13 @@ class SubtitleAnalyzer {
             '"tokens":[{"surface":"word as in text","lemma":"base form",'
             '"pos":"part of speech","meaning":"short Chinese meaning in context"}],'
             '"grammar":[{"pattern":"pattern","explanation":"short Chinese explanation"}],'
-            '"phrases":[{"text":"multi-word phrase from the text","meaning":"short Chinese meaning","usage":"short usage note"}]}]}. '
+            '"phrases":[{"pattern":"take ... to do ...","example":"literal fragment from the text","meaning":"short Chinese meaning","usage":"short usage note"}]}]}. '
             'Keep every input index exactly once. Include at most 8 useful content tokens, '
-            '0-2 grammar notes and 0-4 useful phrases per segment. Phrases must appear '
-            'in the original text. For Japanese, Chinese or Thai, segment tokens into '
+            '0-2 grammar notes and 0-4 useful phrases per segment. Normalize each phrase into '
+            'a reusable pattern with ... placeholders, for example take ... to do ...; do not '
+            'copy the literal fragment as the pattern. The literal occurrence goes in example '
+            'and must appear in the original text. Apply the same normalization to every language. '
+            'For Japanese, Chinese or Thai, segment tokens into '
             'natural words instead of single characters. Source language: '
             '${readingLanguageFor(language).label} ($language). Do not add commentary.',
       },
@@ -334,13 +337,16 @@ Map<int, AnalyzedSegment> parseAnalysisResponse(String raw) {
         if (rawPhrase is! Map) {
           continue;
         }
-        final text = (rawPhrase['text'] as String?)?.trim();
+        final text =
+            (rawPhrase['pattern'] as String?)?.trim() ??
+            (rawPhrase['text'] as String?)?.trim();
         if (text == null || text.isEmpty) {
           continue;
         }
         phrases.add(
           ContentPhrase(
             text: text,
+            example: (rawPhrase['example'] as String?)?.trim(),
             meaning: (rawPhrase['meaning'] as String?)?.trim(),
             usage: (rawPhrase['usage'] as String?)?.trim(),
           ),

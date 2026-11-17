@@ -11,6 +11,9 @@ import '../../core/reading/reading_book.dart';
 import '../../core/vocab/wordbook.dart';
 
 String wordbookPrompt(String languageLabel, bool includePitch) {
+  final pitchNote = includePitch
+      ? '日语请给出音调，例如 0 / 1 / [2]。'
+      : '不需要音调。';
   return '''
 你是一个词书格式转换助手。请把我提供的词书文本转换成严格的 JSON，只输出 JSON，不要解释。
 
@@ -21,23 +24,27 @@ JSON 结构：
   "language": "语言代码",
   "entries": [
     {
-      "word": "单词或短语",
-      "reading": "读音/假名/罗马音",
-      "pitchAccent": "${includePitch ? '音调标记，例如 0 / 1 / [2]' : '留空'}",
-      "pos": "词性",
-      "meaning": "中文释义",
+      "word": "词条原文或短语",
+      "lemma": "原型",
+      "surfaceReading": "当前词读音；英语用 IPA，日语用假名和音调",
+      "lemmaReading": "原型读音",
+      "relation": "变形或派生关系；本身是原型时留空",
+      "senses": [{"pos": "n.", "meaning": "中文释义"}, {"pos": "v.", "meaning": "中文释义"}],
       "usage": "用法说明",
-      "example": "例句"
+      "examples": ["例句"],
+      "forms": [{"label": "过去式", "value": "built"}],
+      "detail": "补充说明，Markdown"
     }
   ]
 }
 
 要求：
-1. 每行词条都输出为一个 entry，不要遗漏。
-2. 短语也作为 word 处理。
-3. 没有的字段用空字符串。
-4. ${includePitch ? '日语词条需要尽量给出音调（pitch accent）。' : '不需要音调字段，填空字符串。'}
-5. 不要输出 markdown 代码块。
+1. 每行词条输出一个 entry，不要遗漏。
+2. 词性和意思必须绑定，一个词性一条 sense。
+3. forms 尽量补全：过去式、过去分词、三单、复数、现在分词、比较级、形容词和名词派生等。
+4. 短语也作为 word 处理；固定搭配尽量写成带 ... 的模式，例如 take ... to do ...。
+5. $pitchNote
+6. 没有的字段用空字符串或空数组，不要输出 markdown 代码块。
 ''';
 }
 

@@ -73,22 +73,35 @@ class ContentToken {
 }
 
 class ContentPhrase {
-  const ContentPhrase({required this.text, this.meaning, this.usage});
+  const ContentPhrase({
+    required this.text,
+    this.example,
+    this.meaning,
+    this.usage,
+  });
 
+  /// Reusable pattern such as "take ... to do ...".
   final String text;
+
+  /// The literal fragment that appeared in the source text.
+  final String? example;
   final String? meaning;
   final String? usage;
 
   Map<String, dynamic> toJson() => {
     'text': text,
+    if (example != null) 'example': example,
     if (meaning != null) 'meaning': meaning,
     if (usage != null) 'usage': usage,
   };
 
   factory ContentPhrase.fromJson(Map<String, dynamic> json) => ContentPhrase(
-    text: json['text'] as String? ?? '',
-    meaning: json['meaning'] as String?,
-    usage: json['usage'] as String?,
+    text:
+        (json['pattern'] as String?)?.trim() ??
+        (json['text'] as String? ?? '').trim(),
+    example: (json['example'] as String?)?.trim(),
+    meaning: (json['meaning'] as String?)?.trim(),
+    usage: (json['usage'] as String?)?.trim(),
   );
 }
 

@@ -113,7 +113,10 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
       onError: (_) {},
     );
     await _syncOnce();
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+    _ticker = Timer.periodic(
+      const Duration(milliseconds: 200),
+      (_) => _tick(),
+    );
     _resyncTimer = Timer.periodic(
       const Duration(seconds: 10),
       (_) => _syncOnce(),
@@ -188,12 +191,23 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
       return;
     }
     final duration = _duration.value;
-    final next = _position.value + 1000;
+    final next = _position.value + 200;
     _position.value = duration > 0 ? min(next, duration) : next;
   }
 
   Future<void> _loadEntries() async {
-    final entries = await _store.list();
+    final stored = await _store.list();
+    final entries = <LyricsEntry>[];
+    for (final entry in stored) {
+      final cached = await const ContentStore().loadAnalysis(
+        entry.document.withoutAnalysis(),
+      );
+      entries.add(
+        cached == null
+            ? entry
+            : LyricsEntry(filePath: entry.filePath, document: cached),
+      );
+    }
     if (!mounted) {
       return;
     }
@@ -660,6 +674,7 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       );
       final enriched = document.copyWith(segments: segments);
       await const ContentStore().saveAnalysis(enriched);
+      await const LyricsStore().save(enriched);
       if (!mounted) {
         return;
       }
@@ -1076,46 +1091,7 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
         ),
       ],
         ),
-        Positioned(
-          left: 0,
-          right: 0,
-          top: 0,
-          height: 72,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    theme.colorScheme.surface.withValues(alpha: 0.95),
-                    theme.colorScheme.surface.withValues(alpha: 0),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          height: 80,
-          child: IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    theme.colorScheme.surface.withValues(alpha: 0),
-                    theme.colorScheme.surface.withValues(alpha: 0.95),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
+
       ],
     );
   }

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ai/ai_client.dart';
 import '../../core/ai/ai_settings.dart';
 import '../../core/appearance/appearance_settings.dart';
+import '../../core/text/tokenizer_settings.dart';
 import '../../core/video/online_video_settings.dart';
 import '../../core/vocab/learning_plan.dart';
 
@@ -168,6 +169,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final appearance = ref.watch(appearanceProvider);
     final plan = ref.watch(learningPlanProvider);
     final onlineVideo = ref.watch(onlineVideoSettingsProvider);
+    final tokenizer = ref.watch(tokenizerModeProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: !_loaded
@@ -274,6 +276,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onChanged: (value) => ref
                       .read(learningPlanProvider.notifier)
                       .update(plan.copyWith(reviewPerDay: value)),
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 12),
+                Text('分词', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  '本地分词速度快。AI 预分词适合人名、复合词较多的日语文本，会增加接口请求。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<TokenizerMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: TokenizerMode.local,
+                      label: Text('本地快速'),
+                    ),
+                    ButtonSegment(
+                      value: TokenizerMode.ai,
+                      label: Text('AI 预分词'),
+                    ),
+                  ],
+                  selected: {tokenizer.mode},
+                  onSelectionChanged: (selection) => ref
+                      .read(tokenizerModeProvider.notifier)
+                      .update(tokenizer.copyWith(mode: selection.first)),
                 ),
                 const SizedBox(height: 24),
                 const Divider(),
@@ -449,7 +479,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: const Icon(Icons.info_outline),
                   title: const Text('LangLearn'),
-                  subtitle: const Text('版本 0.7.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
+                  subtitle: const Text('版本 0.8.0 · 视频字幕 / 词汇 / 语法 / 音乐歌词'),
                 ),
               ],
             ),

@@ -13,6 +13,7 @@ class InteractiveLine extends StatelessWidget {
     this.translationStyle,
     this.textAlign = TextAlign.center,
     this.language = 'en',
+    this.chunks,
   });
 
   final String text;
@@ -24,12 +25,24 @@ class InteractiveLine extends StatelessWidget {
   final TextAlign textAlign;
   final String language;
 
+  /// Optional pre-segmented chunks, for example from AI segmentation.
+  final List<String>? chunks;
+
   static const TextStyle defaultBaseStyle = TextStyle(
     color: Colors.white,
     fontSize: 18,
     height: 1.35,
     shadows: [Shadow(blurRadius: 4, color: Colors.black)],
   );
+
+  String _wordFromChunk(String chunk) {
+    final match = RegExp(
+      r'[A-Za-z\u00C0-\u024F\u0370-\u04FF\u1E00-\u1EFF'
+      r'\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF'
+      r'\u0E00-\u0E7F\u0600-\u06FF\uAC00-\uD7AF\u1100-\u11FF]+',
+    ).firstMatch(chunk);
+    return match?.group(0) ?? chunk.trim();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +61,14 @@ class InteractiveLine extends StatelessWidget {
       _ => WrapAlignment.center,
     };
 
+    final displayChunks = chunks == null
+        ? textChunks(text, language: language)
+        : [
+            for (final chunk in chunks!)
+              hasWordContent(chunk)
+                  ? TextChunk(chunk, _wordFromChunk(chunk))
+                  : TextChunk(chunk, null),
+          ];
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -56,7 +77,7 @@ class InteractiveLine extends StatelessWidget {
           alignment: alignment,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            for (final chunk in textChunks(text, language: language))
+            for (final chunk in displayChunks)
               if (chunk.word == null)
                 Text(chunk.text, style: base)
               else
