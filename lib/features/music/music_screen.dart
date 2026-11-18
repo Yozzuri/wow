@@ -717,7 +717,25 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       widget.onAnalyzed?.call(cached);
       return;
     }
+    await _runAnalysis(document, force: false);
+  }
+
+  Future<void> _regenerateAnalysis() async {
+    final document = _document;
+    if (document == null || _analyzing) {
+      return;
+    }
+    await _runAnalysis(document, force: true);
+  }
+
+  Future<void> _runAnalysis(
+    ContentDocument document, {
+    required bool force,
+  }) async {
     final config = await ref.read(aiConfigProvider.future);
+    if (!mounted) {
+      return;
+    }
     if (!config.isConfigured) {
       _showMessage('请先在「设置」页配置 AI 接口');
       return;
@@ -732,6 +750,7 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       final segments = await const SubtitleAnalyzer().analyze(
         config: config,
         document: document,
+        force: force,
         onBatch: (batch, completed, total, failed) {
           if (!mounted) {
             return;
@@ -844,6 +863,7 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
       analysisTotal: _analysisTotal,
       analysisFailed: _analysisFailed,
       onToggleNotes: _toggleNotes,
+      onRegenerate: _regenerateAnalysis,
       onPhraseTap: _showPhrase,
       onWordTap: widget.onWordTap,
       onSeek: widget.onSeek,
@@ -864,6 +884,7 @@ class _ImmersiveLyrics extends StatefulWidget {
     required this.analysisTotal,
     required this.analysisFailed,
     required this.onToggleNotes,
+    required this.onRegenerate,
     required this.onPhraseTap,
     required this.onWordTap,
     required this.onSeek,
@@ -880,6 +901,7 @@ class _ImmersiveLyrics extends StatefulWidget {
   final int analysisTotal;
   final int analysisFailed;
   final VoidCallback onToggleNotes;
+  final VoidCallback onRegenerate;
   final void Function(ContentPhrase phrase, ContentSegment segment) onPhraseTap;
   final void Function(String word, String sentence) onWordTap;
   final Future<void> Function(int positionMs) onSeek;
@@ -1040,7 +1062,13 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                 )
-              else
+              else ...[
+                if (widget.expanded)
+                  IconButton(
+                    tooltip: '重新生成解析',
+                    onPressed: widget.onRegenerate,
+                    icon: const Icon(Icons.refresh),
+                  ),
                 IconButton(
                   tooltip: widget.expanded ? '收起语法与短语' : '展开语法与短语',
                   onPressed: widget.onToggleNotes,
@@ -1048,6 +1076,7 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
                     widget.expanded ? Icons.unfold_less : Icons.unfold_more,
                   ),
                 ),
+              ],
             ],
           ),
         ),

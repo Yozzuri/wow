@@ -32,6 +32,7 @@ class SubtitleAnalyzer {
     int batchSize = 10,
     int maxChars = 1500,
     int concurrency = 3,
+    bool force = false,
     void Function(
       Map<int, AnalyzedSegment> batch,
       int completed,
@@ -51,7 +52,12 @@ class SubtitleAnalyzer {
     var failed = 0;
     await runWithConcurrency(chunks, concurrency, (chunk, index) async {
       try {
-        final analyzed = await _analyzeChunk(client, chunk, language);
+        final analyzed = await _analyzeChunk(
+          client,
+          chunk,
+          language,
+          force: force,
+        );
         results[index] = analyzed;
         completed++;
         onBatch?.call(analyzed, completed, chunks.length, failed);
@@ -126,6 +132,7 @@ class SubtitleAnalyzer {
     List<ContentSegment> chunk,
     String language, {
     int depth = 0,
+    bool force = false,
   }) async {
     final payload = jsonEncode(
       chunk.map((segment) => {'index': segment.index, 'text': segment.text}).toList(),
@@ -135,7 +142,7 @@ class SubtitleAnalyzer {
       language,
       payload,
     );
-    final cached = await _cache.read(cacheKey);
+    final cached = force ? null : await _cache.read(cacheKey);
     if (cached != null) {
       try {
         return parseAnalysisResponse(cached);
@@ -158,7 +165,13 @@ class SubtitleAnalyzer {
         2,
         (part, _) async {
           merged.addAll(
-            await _analyzeChunk(client, part, language, depth: depth + 1),
+            await _analyzeChunk(
+              client,
+              part,
+              language,
+              depth: depth + 1,
+              force: force,
+            ),
           );
         },
       );
