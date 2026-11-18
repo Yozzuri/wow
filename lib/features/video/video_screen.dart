@@ -1011,7 +1011,11 @@ class _ScrollingSubtitlesState extends State<_ScrollingSubtitles> {
   void _onTick() {
     final position = widget.controller.value.position.inMilliseconds;
     final segment = widget.document.segmentAt(position);
-    final index = segment?.index ?? -1;
+    final segments = widget.document.segments;
+    final index = segment?.index ??
+        (segments.isNotEmpty && position > segments.last.endMs
+            ? segments.last.index
+            : -1);
     if (index == _activeIndex) {
       return;
     }

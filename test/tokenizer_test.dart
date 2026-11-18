@@ -32,6 +32,15 @@ void main() {
     expect(words, isNot(contains('こ')));
   });
 
+  test('keeps Japanese spaces between chunks', () {
+    final chunks = textChunks('これは ペン です', language: 'ja');
+    expect(chunks.map((chunk) => chunk.text).join(), 'これは ペン です');
+    expect(
+      chunks.where((chunk) => chunk.word == null).map((c) => c.text).join(),
+      '  ',
+    );
+  });
+
   test('keeps kana when normalizing titles', () {
     expect(normalizeForMatch('夜に駆ける (Official)'), '夜に駆ける');
     expect(normalizeForMatch('ノンブレス・オブリージュ'), 'ノンブレス・オブリージュ');

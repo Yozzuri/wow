@@ -847,7 +847,19 @@ class _ImmersiveLyricsState extends State<_ImmersiveLyrics> {
 
   int _indexFor(int positionMs) {
     final segment = widget.document.segmentAt(positionMs);
-    return segment?.index ?? -1;
+    if (segment != null) {
+      return segment.index;
+    }
+    final segments = widget.document.segments;
+    if (segments.isEmpty) {
+      return -1;
+    }
+    // The last lyric often ends before the track does; keep it highlighted
+    // instead of dropping the highlight for the rest of the song.
+    if (positionMs > segments.last.endMs) {
+      return segments.last.index;
+    }
+    return -1;
   }
 
   void _onPositionChanged() {

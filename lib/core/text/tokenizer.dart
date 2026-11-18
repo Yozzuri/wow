@@ -80,14 +80,19 @@ List<TextChunk> textChunks(String text, {String language = 'en'}) {
     if (language == 'ja') {
       final chunks = <TextChunk>[];
       for (final raw in jp.tokenize(text)) {
-        final token = raw;
-        if (token.trim().isEmpty) {
+        if (raw.isEmpty) {
+          continue;
+        }
+        // Keep whitespace: Japanese lyrics often separate phrases with
+        // spaces, and dropping them visually glues words together.
+        if (raw.trim().isEmpty) {
+          chunks.add(TextChunk(raw, null));
           continue;
         }
         chunks.add(
-          hasWordContent(token)
-              ? TextChunk(token, token.trim())
-              : TextChunk(token, null),
+          hasWordContent(raw)
+              ? TextChunk(raw, raw.trim())
+              : TextChunk(raw, null),
         );
       }
       return chunks;
