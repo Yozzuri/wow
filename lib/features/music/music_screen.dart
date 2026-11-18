@@ -332,6 +332,24 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _onLyricsAnalyzed(ContentDocument document) {
+    final matched = _matched;
+    if (matched == null || !mounted) {
+      return;
+    }
+    final updated = LyricsEntry(
+      filePath: matched.filePath,
+      document: document,
+    );
+    setState(() {
+      _entries = [
+        for (final entry in _entries)
+          entry.filePath == matched.filePath ? updated : entry,
+      ];
+      _matched = updated;
+    });
+  }
+
   void _showWord(String word, String sentence) {
     final matched = _matched;
     ContentToken? token;
@@ -454,6 +472,7 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
                           onSeek: _seek,
                           onImport: _importLyrics,
                           onOpenSettings: _service.openSettings,
+                          onAnalyzed: _onLyricsAnalyzed,
                         ),
                       ],
                     ),
@@ -575,6 +594,7 @@ class _ImmersiveLyricsTab extends ConsumerStatefulWidget {
     required this.onSeek,
     required this.onImport,
     required this.onOpenSettings,
+    this.onAnalyzed,
   });
 
   final LyricsEntry? matched;
@@ -585,6 +605,10 @@ class _ImmersiveLyricsTab extends ConsumerStatefulWidget {
   final Future<void> Function(int positionMs) onSeek;
   final Future<void> Function() onImport;
   final Future<void> Function() onOpenSettings;
+
+  /// Lets the parent refresh its cached entry so a rebuilt tab can reuse the
+  /// analysis instead of requesting it again.
+  final void Function(ContentDocument document)? onAnalyzed;
 
   @override
   ConsumerState<_ImmersiveLyricsTab> createState() =>
@@ -603,6 +627,10 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
   void initState() {
     super.initState();
     _document = widget.matched?.document;
+    _expanded = _document?.hasRichAnalysis ?? false;
+    if (!_expanded) {
+      _restoreCachedAnalysis();
+    }
   }
 
   @override
@@ -612,13 +640,44 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
         oldWidget.matched?.filePath != widget.matched?.filePath;
     final languageChanged =
         oldWidget.matched?.document.meta.language !=
-        widget.matched?.document.meta.language;
+            widget.matched?.document.meta.language;
     if (pathChanged || languageChanged) {
       _document = widget.matched?.document;
-      if (pathChanged || languageChanged) {
-        _expanded = false;
+      _expanded = _document?.hasRichAnalysis ?? false;
+      if (!_expanded) {
+        _restoreCachedAnalysis();
       }
+      return;
     }
+    final incoming = widget.matched?.document;
+    if (incoming != null &&
+        incoming.hasRichAnalysis &&
+        !(_document?.hasRichAnalysis ?? false)) {
+      _document = incoming;
+      _expanded = true;
+    }
+  }
+
+  /// Lyrics files can lose their analysis when language or metadata changes,
+  /// while the analysis cache still holds it. Reuse that instead of asking
+  /// the model again.
+  Future<void> _restoreCachedAnalysis() async {
+    final document = _document;
+    if (document == null || document.hasRichAnalysis) {
+      return;
+    }
+    final cached = await const ContentStore().loadAnalysis(
+      document.withoutAnalysis(),
+    );
+    if (!mounted || cached == null || !cached.hasRichAnalysis) {
+      return;
+    }
+    setState(() {
+      _document = cached;
+      _expanded = true;
+    });
+    await const LyricsStore().save(cached);
+    widget.onAnalyzed?.call(cached);
   }
 
   void _showMessage(String message) {
@@ -641,6 +700,21 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
     }
     if (document.hasRichAnalysis) {
       setState(() => _expanded = true);
+      return;
+    }
+    final cached = await const ContentStore().loadAnalysis(
+      document.withoutAnalysis(),
+    );
+    if (cached != null && cached.hasRichAnalysis) {
+      await const LyricsStore().save(cached);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _document = cached;
+        _expanded = true;
+      });
+      widget.onAnalyzed?.call(cached);
       return;
     }
     final config = await ref.read(aiConfigProvider.future);
@@ -682,6 +756,7 @@ class _ImmersiveLyricsTabState extends ConsumerState<_ImmersiveLyricsTab> {
         _document = enriched;
         _expanded = true;
       });
+      widget.onAnalyzed?.call(enriched);
       _showMessage(
         _analysisFailed > 0
             ? '解析完成 ${_analysisTotal - _analysisFailed}/$_analysisTotal，失败 $_analysisFailed 块'
