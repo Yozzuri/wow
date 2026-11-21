@@ -1,7 +1,7 @@
 name: langlearn
 description: "Language learning app: video, subtitles, vocabulary, grammar, music lyrics."
 publish_to: 'none'
-version: 0.9.1+16
+version: 0.10.0+17
 
 environment:
   sdk: ^3.13.0

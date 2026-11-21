@@ -20,7 +20,17 @@ class CheckinWidgetBridge(
             "updateCheckin" -> {
                 val dates = call.argument<List<String>>("dates") ?: emptyList()
                 val streak = call.argument<Int>("streak") ?: 0
-                CheckinWidgetProvider.saveState(context, dates, streak)
+                val regular = call.argument<Double>("regular") ?: -1.0
+                val confidential = call.argument<Double>("confidential") ?: -1.0
+                val topSecret = call.argument<Double>("topSecret") ?: -1.0
+                CheckinWidgetProvider.saveState(
+                    context,
+                    dates,
+                    streak,
+                    regular,
+                    confidential,
+                    topSecret,
+                )
                 CheckinWidgetProvider.updateAll(context)
                 result.success(null)
             }
