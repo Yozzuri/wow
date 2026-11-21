@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/challenge/challenge_store.dart';
 import '../../core/challenge/challenge_widget_sync.dart';
 import '../../core/challenge/rank_store.dart';
+import '../../core/text/japanese_kana.dart';
 import '../../core/text/normalize.dart';
 import '../../core/vocab/vocab_store.dart';
 
@@ -117,12 +118,36 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     });
   }
 
+  String get _kanaReading {
+    final entry = _current;
+    if (entry == null || entry.language != 'ja') {
+      return '';
+    }
+    return japaneseKanaOf(_reading);
+  }
+
+  bool _isCorrect(String value) {
+    final answer = normalizeForMatch(value);
+    if (answer.isEmpty) {
+      return false;
+    }
+    if (answer == normalizeForMatch(_target)) {
+      return true;
+    }
+    // Japanese words can also be spelled in hiragana.
+    final kana = _kanaReading;
+    if (kana.isEmpty) {
+      return false;
+    }
+    final typedKana = japaneseKanaOf(value);
+    return typedKana.isNotEmpty && typedKana == kana;
+  }
+
   void _onInputChanged(String value) {
     if (_advancing || _finished || _target.isEmpty) {
       return;
     }
-    final answer = normalizeForMatch(value);
-    if (answer.isEmpty || answer != normalizeForMatch(_target)) {
+    if (!_isCorrect(value)) {
       return;
     }
     _advancing = true;
@@ -297,9 +322,10 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
               autocorrect: false,
               enableSuggestions: false,
               textInputAction: TextInputAction.done,
-              decoration: const InputDecoration(
+              decoration: InputDecoration(
                 labelText: '拼写单词',
                 hintText: '拼写正确会自动进入下一题',
+                helperText: _kanaReading.isEmpty ? null : '日语也可以用平假名拼写',
               ),
               onChanged: _onInputChanged,
             ),
