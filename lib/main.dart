@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'app/app_background.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/appearance/appearance_settings.dart';
@@ -46,23 +46,13 @@ class LangLearnApp extends ConsumerWidget {
         final scrimColor = brightness == Brightness.dark
             ? Colors.black
             : Colors.white;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.file(
-              File(backgroundPath),
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) =>
-                  const SizedBox.shrink(),
-            ),
-            if (appearance.scrimEnabled)
-              ColoredBox(
-                color: scrimColor.withValues(
-                  alpha: appearance.scrimOpacity.clamp(0.0, 0.85),
-                ),
-              ),
-            content,
-          ],
+        return AppBackground(
+          path: backgroundPath,
+          scrimColor: scrimColor,
+          scrimOpacity: appearance.scrimEnabled
+              ? appearance.scrimOpacity
+              : 0,
+          child: content,
         );
       },
     );
