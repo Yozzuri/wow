@@ -354,6 +354,10 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
         if (index >= 0) {
           _phaseWords[index] = updated;
         }
+        _meaningOptions = _buildMeaningOptions(updated);
+        _wordOptions = _buildWordOptions(updated);
+        _wrongChoice = null;
+        _feedback = '';
       }
       setState(() {});
     } catch (error) {
@@ -386,12 +390,14 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
   }
 
   List<String> _buildMeaningOptions(VocabEntry entry) {
-    final target = entry.meaning.trim();
+    // Learning checks the lemma's dictionary meanings, not the meaning this
+    // particular sentence happened to use.
+    final target = entry.displayMeaning.trim();
     if (target.isEmpty) return const [];
     final targetKey = normalizeForMatch(target);
     final pool = <String>{};
     for (final item in _pool) {
-      final meaning = item.meaning.trim();
+      final meaning = item.displayMeaning.trim();
       if (meaning.isEmpty) continue;
       if (normalizeForMatch(meaning) == targetKey) continue;
       pool.add(meaning);
@@ -564,13 +570,40 @@ class _LearnSessionPageState extends ConsumerState<LearnSessionPage> {
                       message: '这个词条缺少可选释义，跳过词意选择。',
                       onSkip: () => _advanceState(entry),
                     )
-                  : _ChoiceStep(
-                      title: '选出最符合句意的释义',
-                      prompt: '',
-                      options: _meaningOptions,
-                      wrongChoice: _wrongChoice,
-                      feedback: _feedback,
-                      onSelect: (value) => _onChoice(value, entry.meaning),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _ChoiceStep(
+                          title: '选出该词原型的释义',
+                          prompt: '',
+                          options: _meaningOptions,
+                          wrongChoice: _wrongChoice,
+                          feedback: _feedback,
+                          onSelect: (value) =>
+                              _onChoice(value, entry.displayMeaning),
+                        ),
+                        if (entry.senses.length <= 1)
+                          TextButton.icon(
+                            onPressed: _busy
+                                ? null
+                                : () => _refreshAnalysis(entry),
+                            icon: _busy
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.auto_awesome, size: 16),
+                            label: Text(
+                              _busy ? '补全中…' : 'AI 补全原型释义',
+                            ),
+                            style: TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                      ],
                     )
             else if (_phase == 2)
               _wordOptions.length < 2

@@ -165,6 +165,9 @@ class ChallengeStore {
 /// 9.70, and only a perfect raw 10.0 reaches 10.0. Raising the displayed
 /// score therefore gets disproportionately harder near the top.
 double settleScore(ChallengeDifficulty difficulty, double raw) {
+  if (difficulty == ChallengeDifficulty.training) {
+    return double.parse((raw + 1).clamp(0.0, 10.0).toStringAsFixed(1));
+  }
   if (difficulty != ChallengeDifficulty.extreme) {
     return raw;
   }

@@ -123,8 +123,10 @@ class _AchievementTile extends StatelessWidget {
           ),
         ),
         trailing: IconButton(
-          tooltip: pinned ? '取消展示' : '展示在小组件',
-          onPressed: onTogglePin,
+          tooltip: !item.unlocked
+              ? '未解锁的成就不能展示'
+              : (pinned ? '取消展示' : '展示在小组件'),
+          onPressed: item.unlocked ? onTogglePin : null,
           icon: Icon(
             pinned ? Icons.push_pin : Icons.push_pin_outlined,
             color: pinned ? theme.colorScheme.primary : null,

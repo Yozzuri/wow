@@ -12,6 +12,8 @@ void main() {
 
   test('extreme scores are compressed only at the top end', () {
     expect(settleScore(ChallengeDifficulty.regular, 9.6), 9.6);
+    expect(settleScore(ChallengeDifficulty.training, 8.4), 9.4);
+    expect(settleScore(ChallengeDifficulty.training, 9.6), 10.0);
     expect(settleScore(ChallengeDifficulty.extreme, 8.0), 8.0);
     expect(settleScore(ChallengeDifficulty.extreme, 9.0), lessThan(9.0));
     expect(settleScore(ChallengeDifficulty.extreme, 9.5), lessThan(9.5));
@@ -28,7 +30,7 @@ void main() {
     );
     await store.recordChallenge(
       difficulty: ChallengeDifficulty.regular,
-      score: 7.0,
+      score: 9.8,
       ranked: false,
     );
 
@@ -38,6 +40,7 @@ void main() {
     final ranked = progress.firstWhere((item) => item.def.id == 'ranked_star');
 
     expect(genius.current, 9.6);
+    expect(genius.secondaryCurrent, 9.8);
     expect(genius.unlocked, isTrue);
     expect(veteran.current, 2);
     expect(veteran.unlocked, isFalse);
@@ -50,16 +53,22 @@ void main() {
     await store.recordChallenge(
       difficulty: ChallengeDifficulty.extreme,
       score: 9.6,
+      ranked: true,
+    );
+    await store.recordChallenge(
+      difficulty: ChallengeDifficulty.regular,
+      score: 9.8,
       ranked: false,
     );
     await store.togglePinned('genius');
-    await store.togglePinned('veteran');
     await store.togglePinned('ranked_star');
+    // Locked achievements are refused.
+    await store.togglePinned('veteran');
 
     final pinned = await store.loadPinned();
-    expect(pinned.length, 3);
+    expect(pinned, ['genius', 'ranked_star']);
     final line = await store.widgetLine();
-    expect(line.split(' ').first, '🧠');
-    expect(line.contains('🔒'), isTrue);
+    expect(line.split('\n').first, '🧠 天才少年');
+    expect(line.contains('🔒'), isFalse);
   });
 }

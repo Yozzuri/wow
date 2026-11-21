@@ -14,6 +14,9 @@ class AchievementDef {
     required this.condition,
     required this.target,
     required this.unit,
+    this.secondaryCondition,
+    this.secondaryTarget,
+    this.secondaryUnit,
   });
 
   final String id;
@@ -23,6 +26,9 @@ class AchievementDef {
   final String condition;
   final double target;
   final String unit;
+  final String? secondaryCondition;
+  final double? secondaryTarget;
+  final String? secondaryUnit;
 }
 
 const achievementDefs = <AchievementDef>[
@@ -31,9 +37,13 @@ const achievementDefs = <AchievementDef>[
     emoji: '🧠',
     name: '天才少年',
     description: '如果这是你真正的实力 那么他人的质疑便是对你最大的认可！',
-    condition: '在任意一场极限挑战中达成 9.5 以上的综合评分',
-    target: 9.5,
+    condition:
+        '在任意一场极限挑战中达成 9.0 以上综合评分，并在常规挑战中达成 9.8 综合评分',
+    target: 9.0,
     unit: '分',
+    secondaryCondition: '在任意一场常规挑战中达成 9.8 综合评分',
+    secondaryTarget: 9.8,
+    secondaryUnit: '分',
   ),
   AchievementDef(
     id: 'veteran',
@@ -63,11 +73,13 @@ AchievementDef achievementById(String id) => achievementDefs.firstWhere(
 class AchievementStats {
   const AchievementStats({
     this.bestExtremeScore = 0,
+    this.bestRegularScore = 0,
     this.totalChallenges = 0,
     this.rankedSettlements = 0,
   });
 
   final double bestExtremeScore;
+  final double bestRegularScore;
   final int totalChallenges;
   final int rankedSettlements;
 
@@ -78,8 +90,14 @@ class AchievementStats {
     _ => 0,
   };
 
+  double secondaryValueFor(AchievementDef def) => switch (def.id) {
+    'genius' => bestRegularScore,
+    _ => 0,
+  };
+
   Map<String, dynamic> toJson() => {
     'bestExtremeScore': bestExtremeScore,
+    'bestRegularScore': bestRegularScore,
     'totalChallenges': totalChallenges,
     'rankedSettlements': rankedSettlements,
   };
@@ -88,26 +106,58 @@ class AchievementStats {
       AchievementStats(
         bestExtremeScore:
             (json['bestExtremeScore'] as num?)?.toDouble() ?? 0,
+        bestRegularScore:
+            (json['bestRegularScore'] as num?)?.toDouble() ?? 0,
         totalChallenges: (json['totalChallenges'] as num?)?.toInt() ?? 0,
         rankedSettlements: (json['rankedSettlements'] as num?)?.toInt() ?? 0,
       );
 }
 
 class AchievementProgress {
-  const AchievementProgress({required this.def, required this.current});
+  const AchievementProgress({
+    required this.def,
+    required this.current,
+    this.secondaryCurrent = 0,
+  });
 
   final AchievementDef def;
   final double current;
+  final double secondaryCurrent;
 
-  bool get unlocked => current >= def.target;
+  bool get unlocked {
+    if (current < def.target) {
+      return false;
+    }
+    final second = def.secondaryTarget;
+    return second == null || secondaryCurrent >= second;
+  }
 
-  double get ratio => def.target <= 0
-      ? 1
-      : (current / def.target).clamp(0.0, 1.0);
+  double get ratio {
+    final primary = def.target <= 0
+        ? 1.0
+        : (current / def.target).clamp(0.0, 1.0);
+    final second = def.secondaryTarget;
+    if (second == null || second <= 0) {
+      return primary;
+    }
+    final secondaryRatio = (secondaryCurrent / second).clamp(0.0, 1.0);
+    return primary < secondaryRatio ? primary : secondaryRatio;
+  }
 
-  String get progressLabel =>
-      '${current.toStringAsFixed(def.target % 1 == 0 ? 0 : 1)}'
-      ' / ${def.target.toStringAsFixed(def.target % 1 == 0 ? 0 : 1)} ${def.unit}';
+  String _format(double value, double target) =>
+      value.toStringAsFixed(target % 1 == 0 ? 0 : 1);
+
+  String get progressLabel {
+    final primary =
+        '${_format(current, def.target)} / ${_format(def.target, def.target)} ${def.unit}';
+    final second = def.secondaryTarget;
+    if (second == null) {
+      return primary;
+    }
+    return '极限 $primary · 常规 '
+        '${_format(secondaryCurrent, second)} / ${_format(second, second)} '
+        '${def.secondaryUnit ?? def.unit}';
+  }
 }
 
 class AchievementStore {
@@ -135,7 +185,11 @@ class AchievementStore {
     final stats = await _loadStats();
     return [
       for (final def in achievementDefs)
-        AchievementProgress(def: def, current: stats.valueFor(def)),
+        AchievementProgress(
+          def: def,
+          current: stats.valueFor(def),
+          secondaryCurrent: stats.secondaryValueFor(def),
+        ),
     ];
   }
 
@@ -148,8 +202,12 @@ class AchievementStore {
     final bestExtreme = difficulty == ChallengeDifficulty.extreme
         ? (score > stats.bestExtremeScore ? score : stats.bestExtremeScore)
         : stats.bestExtremeScore;
+    final bestRegular = difficulty == ChallengeDifficulty.regular
+        ? (score > stats.bestRegularScore ? score : stats.bestRegularScore)
+        : stats.bestRegularScore;
     final next = AchievementStats(
       bestExtremeScore: bestExtreme,
+      bestRegularScore: bestRegular,
       totalChallenges: stats.totalChallenges + 1,
       rankedSettlements:
           stats.rankedSettlements + (ranked ? 1 : 0),
@@ -184,7 +242,12 @@ class AchievementStore {
     if (current.contains(id)) {
       current.remove(id);
     } else {
-      if (current.length >= 3) {
+      final progress = await this.progress();
+      final item = progress.firstWhere(
+        (entry) => entry.def.id == id,
+        orElse: () => progress.first,
+      );
+      if (!item.unlocked || current.length >= 3) {
         return current;
       }
       current.add(id);
@@ -194,7 +257,7 @@ class AchievementStore {
     return current;
   }
 
-  /// Emoji line for the home-screen widgets. Locked ones show a lock.
+  /// One unlocked achievement per line for the home-screen widgets.
   Future<String> widgetLine() async {
     final pinned = await loadPinned();
     if (pinned.isEmpty) {
@@ -202,16 +265,15 @@ class AchievementStore {
     }
     final progress = await this.progress();
     final byId = {for (final item in progress) item.def.id: item};
-    return pinned
-        .map((id) {
-          final item = byId[id];
-          if (item == null) {
-            return '';
-          }
-          return item.unlocked ? item.def.emoji : '🔒';
-        })
-        .where((value) => value.isNotEmpty)
-        .join(' ');
+    final lines = <String>[];
+    for (final id in pinned) {
+      final item = byId[id];
+      if (item == null || !item.unlocked) {
+        continue;
+      }
+      lines.add('${item.def.emoji} ${item.def.name}');
+    }
+    return lines.join('\n');
   }
 }
 
