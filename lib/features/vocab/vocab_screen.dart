@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/ai/ai_settings.dart';
+import '../../core/models/content_document.dart';
 import '../../core/vocab/checkin_store.dart';
 import '../../core/vocab/daily_tasks.dart';
 import '../../core/vocab/learning_plan.dart';
@@ -14,6 +15,7 @@ import '../../core/vocab/vocab_preanalysis.dart';
 import '../../core/vocab/vocab_store.dart';
 import '../../core/vocab/wordbook.dart';
 import '../../core/vocab/wordbook_enricher.dart';
+import '../common/word_explanation_sheet.dart';
 import 'learn_session_page.dart';
 import 'wordbook_import_screen.dart';
 
@@ -221,17 +223,46 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
     await _load();
   }
 
-  Future<void> _reviewSingle(VocabEntry entry) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (context) => LearnSessionPage(
-          newEntries: entry.isNew ? [entry] : const [],
-          reviewEntries: entry.isNew ? const [] : [entry],
-          pool: _entries,
-        ),
+  Future<void> _showEntryDetails(VocabEntry entry) async {
+    await showWordExplanation(
+      context,
+      word: entry.word.trim().isEmpty ? entry.lemma : entry.word,
+      sentence: entry.sentence,
+      language: entry.language,
+      token: ContentToken(
+        surface: entry.word,
+        lemma: entry.lemma,
+        pos: entry.pos,
+        meaning: entry.meaning,
+      ),
+      sourceTitle: entry.sourceTitle,
+    );
+    await _load();
+  }
+
+  Future<void> _confirmDeleteEntry(VocabEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除词条'),
+        content: Text('确定从生词本删除「${entry.lemma}」吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
       ),
     );
-    await ref.read(checkinProvider.notifier).refresh();
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await ref.read(vocabStoreProvider).remove(entry);
+    ref.read(vocabVersionProvider.notifier).state++;
     await _load();
   }
 
@@ -280,6 +311,26 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
   }
 
   Future<void> _deleteWordbook(Wordbook book) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除词书'),
+        content: Text('确定删除「${book.name}」吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
     await _wordbookStore.delete(book);
     await _load();
   }
@@ -377,7 +428,8 @@ class _VocabScreenState extends ConsumerState<VocabScreen> {
             ),
             _WordbookTab(
               entries: _entries,
-              onReview: _reviewSingle,
+              onOpen: _showEntryDetails,
+              onDelete: _confirmDeleteEntry,
               onRefresh: _load,
               onStart: () =>
                   tasks.total > 0 ? _startDaily(tasks) : _startExtra(tasks),
@@ -588,13 +640,6 @@ class _LearnTab extends StatelessWidget {
             onTap: onPreAnalyze,
           ),
         ),
-        const SizedBox(height: 12),
-        Text(
-          '生词本共 $totalCount 个词条。每天先完成新学，再复习今天到期的单词，全部完成后打卡。',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: theme.colorScheme.onSurfaceVariant,
-          ),
-        ),
       ],
     );
   }
@@ -637,13 +682,15 @@ class _CountTile extends StatelessWidget {
 class _WordbookTab extends StatelessWidget {
   const _WordbookTab({
     required this.entries,
-    required this.onReview,
+    required this.onOpen,
+    required this.onDelete,
     required this.onRefresh,
     required this.onStart,
   });
 
   final List<VocabEntry> entries;
-  final void Function(VocabEntry entry) onReview;
+  final void Function(VocabEntry entry) onOpen;
+  final void Function(VocabEntry entry) onDelete;
   final Future<void> Function() onRefresh;
   final VoidCallback onStart;
 
@@ -754,7 +801,8 @@ class _WordbookTab extends StatelessWidget {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-              onTap: () => onReview(entry),
+              onTap: () => onOpen(entry),
+              onLongPress: () => onDelete(entry),
             );
           }),
         ],
@@ -830,6 +878,7 @@ class _ImportTab extends StatelessWidget {
               leading: const Icon(Icons.menu_book_outlined),
               title: Text(book.name),
               subtitle: Text('${book.language} · ${book.entries.length} 个词条'),
+              onLongPress: () => onDelete(book),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
