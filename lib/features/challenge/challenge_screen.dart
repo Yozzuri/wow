@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/challenge/challenge_store.dart';
+import '../../core/challenge/rank_store.dart';
 import '../../core/vocab/vocab_store.dart';
 import 'challenge_session_page.dart';
 
@@ -19,6 +20,7 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
 
   int _count = 10;
   ChallengeDifficulty _difficulty = ChallengeDifficulty.regular;
+  bool _ranked = false;
   List<VocabEntry> _entries = const [];
   bool _loading = true;
 
@@ -70,10 +72,12 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
           entries: _entries,
           difficulty: _difficulty,
           count: count,
+          ranked: _ranked,
         ),
       ),
     );
     ref.invalidate(challengeAveragesProvider);
+    ref.invalidate(rankProvider);
     await _load();
   }
 
@@ -81,6 +85,7 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final averages = ref.watch(challengeAveragesProvider);
+    final rank = ref.watch(rankProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('挑战')),
       body: _loading
@@ -94,6 +99,58 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (rank.valueOrNull != null) ...[
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '当前段位',
+                                  style: theme.textTheme.titleSmall,
+                                ),
+                              ),
+                              Text(
+                                '第 ${rank.value!.season} 赛季',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            rank.value!.displayText,
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            rank.value!.isTopTier
+                                ? '已到最高段位，继续积累星数'
+                                : '距离下一颗星还差 ${rank.value!.pointsToNextStar} 分',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '赛季剩余 ${rank.value!.seasonDaysLeft.clamp(0, rankSeasonDays)} 天',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 18),
                 Text('题目数量', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
@@ -127,7 +184,21 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
                     average: averages.valueOrNull?.averageFor(difficulty),
                     onTap: () => setState(() => _difficulty = difficulty),
                   ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 4),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _ranked,
+                  onChanged: (value) =>
+                      setState(() => _ranked = value ?? false),
+                  title: const Text('开启排位'),
+                  subtitle: Text(
+                    _difficulty.affectsRank
+                        ? '本次成绩会加减排位积分'
+                        : '训练难度可以开启，但不加也不扣排位积分',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+                const SizedBox(height: 8),
                 FilledButton.icon(
                   onPressed: _start,
                   icon: const Icon(Icons.play_arrow),

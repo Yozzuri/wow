@@ -7,12 +7,14 @@ import 'app/app_background.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/appearance/appearance_settings.dart';
+import 'core/challenge/challenge_widget_sync.dart';
 import 'core/vocab/checkin_store.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: LangLearnApp()));
   unawaited(const CheckinStore().syncWidget());
+  unawaited(ChallengeWidgetSync.sync());
 }
 
 class LangLearnApp extends ConsumerWidget {

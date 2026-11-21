@@ -1,0 +1,264 @@
+import 'dart:convert';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'challenge_store.dart';
+
+const List<String> rankTierNames = [
+  '青铜',
+  '白银',
+  '黄金',
+  '铂金',
+  '钻石',
+  '大师',
+  '宗师',
+  '王者',
+  '巅峰',
+];
+
+const List<String> rankDivisionLabels = ['III', 'II', 'I'];
+
+/// Points needed to gain one star.
+const int rankPointsPerStar = 100;
+
+/// A season lasts two months.
+const int rankSeasonDays = 60;
+
+/// Tier inheritance at season end, as 0-based tier indexes.
+/// 巅峰(9) -> 宗师(7), 宗师(7) -> 钻石(5), 王者(8) -> 大师(6), ...
+const List<int> rankTierInheritance = [0, 0, 0, 1, 2, 3, 4, 5, 6];
+
+class RankState {
+  const RankState({
+    required this.tier,
+    required this.division,
+    required this.stars,
+    required this.points,
+    required this.season,
+    required this.seasonStart,
+  });
+
+  final int tier;
+  final int division;
+  final int stars;
+  final int points;
+  final int season;
+  final DateTime seasonStart;
+
+  factory RankState.initial(DateTime now) => RankState(
+    tier: 0,
+    division: 0,
+    stars: 0,
+    points: 0,
+    season: 1,
+    seasonStart: DateTime(now.year, now.month, now.day),
+  );
+
+  bool get isTopTier => tier >= rankTierNames.length - 1;
+
+  String get tierName => rankTierNames[tier.clamp(0, rankTierNames.length - 1)];
+
+  String get divisionLabel => rankDivisionLabels[division.clamp(0, 2)];
+
+  String get label => '$tierName $divisionLabel';
+
+  /// Filled/empty stars for the widget, e.g. "★★☆☆".
+  String get starBar {
+    if (isTopTier) {
+      return '★×$stars';
+    }
+    final filled = stars.clamp(0, 4);
+    return List.filled(filled, '★').join() +
+        List.filled(4 - filled, '☆').join();
+  }
+
+  String get displayText => '$label $starBar';
+
+  int get pointsToNextStar => rankPointsPerStar - points;
+
+  int get seasonDaysLeft =>
+      rankSeasonDays - DateTime.now().difference(seasonStart).inDays;
+
+  RankState copyWith({
+    int? tier,
+    int? division,
+    int? stars,
+    int? points,
+    int? season,
+    DateTime? seasonStart,
+  }) => RankState(
+    tier: tier ?? this.tier,
+    division: division ?? this.division,
+    stars: stars ?? this.stars,
+    points: points ?? this.points,
+    season: season ?? this.season,
+    seasonStart: seasonStart ?? this.seasonStart,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'tier': tier,
+    'division': division,
+    'stars': stars,
+    'points': points,
+    'season': season,
+    'seasonStart': seasonStart.toIso8601String(),
+  };
+
+  factory RankState.fromJson(Map<String, dynamic> json, DateTime fallback) =>
+      RankState(
+        tier: ((json['tier'] as num?)?.toInt() ?? 0).clamp(
+          0,
+          rankTierNames.length - 1,
+        ),
+        division: ((json['division'] as num?)?.toInt() ?? 0).clamp(0, 2),
+        stars: ((json['stars'] as num?)?.toInt() ?? 0).clamp(0, 999),
+        points: ((json['points'] as num?)?.toInt() ?? 0).clamp(
+          0,
+          rankPointsPerStar - 1,
+        ),
+        season: (json['season'] as num?)?.toInt() ?? 1,
+        seasonStart:
+            DateTime.tryParse(json['seasonStart'] as String? ?? '') ?? fallback,
+      );
+}
+
+/// Rank points earned by one challenge run. Training returns 0.
+int rankDeltaFor(ChallengeDifficulty difficulty, double score) {
+  if (!difficulty.affectsRank) {
+    return 0;
+  }
+  final base = ((score - 6.0) * 20).round();
+  final scaled = difficulty == ChallengeDifficulty.extreme
+      ? (base * 1.5).round()
+      : base;
+  return scaled.clamp(-150, 150);
+}
+
+RankState advanceRank(RankState state, int delta) {
+  if (delta == 0) {
+    return state;
+  }
+  var tier = state.tier;
+  var division = state.division;
+  var stars = state.stars;
+  var points = state.points + delta;
+  if (delta > 0) {
+    while (points >= rankPointsPerStar) {
+      points -= rankPointsPerStar;
+      stars += 1;
+      if (!_isTop(tier) && stars >= 4) {
+        stars -= 4;
+        division += 1;
+        if (division > 2) {
+          division = 0;
+          tier += 1;
+        }
+      }
+    }
+  } else {
+    while (points < 0) {
+      if (stars > 0) {
+        stars -= 1;
+        points += rankPointsPerStar;
+      } else if (division > 0) {
+        division -= 1;
+        stars = 3;
+        points += rankPointsPerStar;
+      } else if (tier > 0) {
+        tier -= 1;
+        division = 2;
+        stars = 3;
+        points += rankPointsPerStar;
+      } else {
+        points = 0;
+        break;
+      }
+    }
+  }
+  return state.copyWith(
+    tier: tier,
+    division: division,
+    stars: stars,
+    points: points,
+  );
+}
+
+RankState inheritRank(RankState state) {
+  final nextTier = rankTierInheritance[state.tier.clamp(
+    0,
+    rankTierInheritance.length - 1,
+  )];
+  return RankState(
+    tier: nextTier,
+    division: 0,
+    stars: 0,
+    points: 0,
+    season: state.season + 1,
+    seasonStart: state.seasonStart.add(const Duration(days: rankSeasonDays)),
+  );
+}
+
+bool _isTop(int tier) => tier >= rankTierNames.length - 1;
+
+class RankStore {
+  const RankStore();
+
+  static const _prefsKey = 'rank_state_v1';
+
+  Future<RankState> load({DateTime? now}) async {
+    final current = now ?? DateTime.now();
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_prefsKey);
+    RankState state;
+    if (raw == null || raw.isEmpty) {
+      state = RankState.initial(current);
+    } else {
+      try {
+        state = RankState.fromJson(
+          (jsonDecode(raw) as Map).cast<String, dynamic>(),
+          current,
+        );
+      } catch (_) {
+        state = RankState.initial(current);
+      }
+    }
+    final rolled = applySeasonRollover(state, current);
+    if (rolled != state || raw == null || raw.isEmpty) {
+      await _save(rolled);
+    }
+    return rolled;
+  }
+
+  Future<RankState> applyResult(
+    ChallengeDifficulty difficulty,
+    double score,
+  ) async {
+    final state = await load();
+    final delta = rankDeltaFor(difficulty, score);
+    if (delta == 0) {
+      return state;
+    }
+    final next = advanceRank(state, delta);
+    await _save(next);
+    return next;
+  }
+
+  Future<void> _save(RankState state) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, jsonEncode(state.toJson()));
+  }
+}
+
+/// Handles any number of elapsed two-month seasons at once.
+RankState applySeasonRollover(RankState state, DateTime now) {
+  var current = state;
+  while (!now.isBefore(
+    current.seasonStart.add(const Duration(days: rankSeasonDays)),
+  )) {
+    current = inheritRank(current);
+  }
+  return current;
+}
+
+final rankProvider = FutureProvider<RankState>((ref) => const RankStore().load());

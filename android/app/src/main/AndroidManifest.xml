@@ -38,6 +38,17 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/checkin_widget_info" />
         </receiver>
+        <receiver
+            android:name=".ChallengeWidgetProvider"
+            android:exported="false"
+            android:label="LangLearn 挑战">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/challenge_widget_info" />
+        </receiver>
         <service
             android:name=".MediaNotificationListenerService"
             android:exported="true"

@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/challenge/challenge_store.dart';
+import '../../core/challenge/challenge_widget_sync.dart';
+import '../../core/challenge/rank_store.dart';
 import '../../core/text/normalize.dart';
-import '../../core/vocab/checkin_store.dart';
 import '../../core/vocab/vocab_store.dart';
 
 class ChallengeSessionPage extends ConsumerStatefulWidget {
@@ -14,11 +15,13 @@ class ChallengeSessionPage extends ConsumerStatefulWidget {
     required this.entries,
     required this.difficulty,
     required this.count,
+    this.ranked = false,
   });
 
   final List<VocabEntry> entries;
   final ChallengeDifficulty difficulty;
   final int count;
+  final bool ranked;
 
   @override
   ConsumerState<ChallengeSessionPage> createState() =>
@@ -40,6 +43,8 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
   bool _finished = false;
   double _score = 0;
   ChallengeAverages? _averages;
+  RankState? _rankState;
+  int _rankDelta = 0;
 
   ChallengeDifficulty get _difficulty => widget.difficulty;
 
@@ -160,11 +165,21 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     });
     _timer.stop();
     final averages = await const ChallengeStore().record(_difficulty, score);
-    await const CheckinStore().syncWidget();
+    RankState? rankState;
+    var rankDelta = 0;
+    if (widget.ranked && _difficulty.affectsRank) {
+      rankDelta = rankDeltaFor(_difficulty, score);
+      rankState = await const RankStore().applyResult(_difficulty, score);
+    }
+    await ChallengeWidgetSync.sync();
     if (!mounted) {
       return;
     }
-    setState(() => _averages = averages);
+    setState(() {
+      _averages = averages;
+      _rankState = rankState;
+      _rankDelta = rankDelta;
+    });
   }
 
   @override
@@ -177,6 +192,9 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
         correct: _correct,
         total: _words.length,
         averages: _averages,
+        rankState: _rankState,
+        rankDelta: _rankDelta,
+        ranked: widget.ranked,
         onRetry: () {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute<void>(
@@ -184,6 +202,7 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
                 entries: widget.entries,
                 difficulty: _difficulty,
                 count: widget.count,
+                ranked: widget.ranked,
               ),
             ),
           );
@@ -309,6 +328,9 @@ class _ResultView extends StatelessWidget {
     required this.correct,
     required this.total,
     required this.averages,
+    required this.rankState,
+    required this.rankDelta,
+    required this.ranked,
     required this.onRetry,
   });
 
@@ -317,6 +339,9 @@ class _ResultView extends StatelessWidget {
   final int correct;
   final int total;
   final ChallengeAverages? averages;
+  final RankState? rankState;
+  final int rankDelta;
+  final bool ranked;
   final VoidCallback onRetry;
 
   String _format(double? value) =>
@@ -356,6 +381,57 @@ class _ResultView extends StatelessWidget {
               style: theme.textTheme.titleMedium,
             ),
           ),
+          if (ranked) ...[
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('排位', style: theme.textTheme.titleSmall),
+                    const SizedBox(height: 6),
+                    if (!difficulty.affectsRank)
+                      Text(
+                        '训练难度不计入排位，本次段位没有变化。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      )
+                    else ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              rankState?.displayText ?? '--',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                          ),
+                          Text(
+                            rankDelta >= 0
+                                ? '+$rankDelta'
+                                : '$rankDelta',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              color: rankDelta >= 0
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.error,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '排位积分',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
           Card(
             child: Padding(

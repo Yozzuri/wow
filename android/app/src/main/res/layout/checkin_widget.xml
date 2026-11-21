@@ -48,14 +48,4 @@
         android:text="今日待打卡"
         android:textColor="#CCFFFFFF"
         android:textSize="12sp" />
-
-    <TextView
-        android:id="@+id/widget_scores"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:maxLines="2"
-        android:text="挑战暂无成绩"
-        android:textColor="#B3FFFFFF"
-        android:textSize="11sp" />
 </LinearLayout>

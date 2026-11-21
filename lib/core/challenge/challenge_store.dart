@@ -3,87 +3,94 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum ChallengeDifficulty { regular, confidential, topSecret }
+enum ChallengeDifficulty { training, regular, extreme }
 
 extension ChallengeDifficultyInfo on ChallengeDifficulty {
   String get label => switch (this) {
+    ChallengeDifficulty.training => '训练',
     ChallengeDifficulty.regular => '常规',
-    ChallengeDifficulty.confidential => '机密',
-    ChallengeDifficulty.topSecret => '绝密',
+    ChallengeDifficulty.extreme => '极限',
   };
 
   String get description => switch (this) {
-    ChallengeDifficulty.regular => '每题 15 秒起，逐题收紧',
-    ChallengeDifficulty.confidential => '每题 10 秒起，节奏更快',
-    ChallengeDifficulty.topSecret => '每题 7 秒起，几乎没有余量',
+    ChallengeDifficulty.training => '每题 20 秒起，节奏宽松',
+    ChallengeDifficulty.regular => '每题 12 秒起，逐步收紧',
+    ChallengeDifficulty.extreme => '每题 7 秒起，几乎没有余量',
   };
 
   /// Seconds allowed for the first word.
   double get startSeconds => switch (this) {
-    ChallengeDifficulty.regular => 15,
-    ChallengeDifficulty.confidential => 10,
-    ChallengeDifficulty.topSecret => 7,
+    ChallengeDifficulty.training => 20,
+    ChallengeDifficulty.regular => 12,
+    ChallengeDifficulty.extreme => 7,
   };
 
   /// Seconds removed from the allowance after each word.
   double get stepSeconds => switch (this) {
-    ChallengeDifficulty.regular => 0.4,
-    ChallengeDifficulty.confidential => 0.5,
-    ChallengeDifficulty.topSecret => 0.4,
+    ChallengeDifficulty.training => 0.3,
+    ChallengeDifficulty.regular => 0.5,
+    ChallengeDifficulty.extreme => 0.4,
   };
 
   /// Never go below this many seconds per word.
   double get minSeconds => switch (this) {
-    ChallengeDifficulty.regular => 6,
-    ChallengeDifficulty.confidential => 4,
-    ChallengeDifficulty.topSecret => 3,
+    ChallengeDifficulty.training => 8,
+    ChallengeDifficulty.regular => 5,
+    ChallengeDifficulty.extreme => 3,
   };
+
+  /// Training never changes ranked points.
+  bool get affectsRank => this != ChallengeDifficulty.training;
 
   double secondsFor(int index) {
     final value = startSeconds - index * stepSeconds;
     return value < minSeconds ? minSeconds : value;
   }
 
-  String get storageKey => name;
+  String get storageKey => switch (this) {
+    ChallengeDifficulty.training => 'training',
+    ChallengeDifficulty.regular => 'regular',
+    ChallengeDifficulty.extreme => 'extreme',
+  };
 }
 
 class ChallengeAverages {
   const ChallengeAverages({
+    this.training,
     this.regular,
-    this.confidential,
-    this.topSecret,
+    this.extreme,
+    this.trainingCount = 0,
     this.regularCount = 0,
-    this.confidentialCount = 0,
-    this.topSecretCount = 0,
+    this.extremeCount = 0,
   });
 
+  final double? training;
   final double? regular;
-  final double? confidential;
-  final double? topSecret;
+  final double? extreme;
+  final int trainingCount;
   final int regularCount;
-  final int confidentialCount;
-  final int topSecretCount;
+  final int extremeCount;
 
   double? averageFor(ChallengeDifficulty difficulty) => switch (difficulty) {
+    ChallengeDifficulty.training => training,
     ChallengeDifficulty.regular => regular,
-    ChallengeDifficulty.confidential => confidential,
-    ChallengeDifficulty.topSecret => topSecret,
+    ChallengeDifficulty.extreme => extreme,
   };
 
   int countFor(ChallengeDifficulty difficulty) => switch (difficulty) {
+    ChallengeDifficulty.training => trainingCount,
     ChallengeDifficulty.regular => regularCount,
-    ChallengeDifficulty.confidential => confidentialCount,
-    ChallengeDifficulty.topSecret => topSecretCount,
+    ChallengeDifficulty.extreme => extremeCount,
   };
 
   bool get isEmpty =>
-      regularCount == 0 && confidentialCount == 0 && topSecretCount == 0;
+      trainingCount == 0 && regularCount == 0 && extremeCount == 0;
 }
 
 class ChallengeStore {
   const ChallengeStore();
 
-  static const _prefsKey = 'challenge_scores_v1';
+  static const _prefsKey = 'challenge_scores_v2';
 
   Future<Map<String, dynamic>> _loadRaw() async {
     final prefs = await SharedPreferences.getInstance();
@@ -117,16 +124,16 @@ class ChallengeStore {
       return (sum / count, count);
     }
 
+    final training = read(ChallengeDifficulty.training.storageKey);
     final regular = read(ChallengeDifficulty.regular.storageKey);
-    final confidential = read(ChallengeDifficulty.confidential.storageKey);
-    final topSecret = read(ChallengeDifficulty.topSecret.storageKey);
+    final extreme = read(ChallengeDifficulty.extreme.storageKey);
     return ChallengeAverages(
+      training: training.$1,
+      trainingCount: training.$2,
       regular: regular.$1,
       regularCount: regular.$2,
-      confidential: confidential.$1,
-      confidentialCount: confidential.$2,
-      topSecret: topSecret.$1,
-      topSecretCount: topSecret.$2,
+      extreme: extreme.$1,
+      extremeCount: extreme.$2,
     );
   }
 
@@ -148,6 +155,14 @@ class ChallengeStore {
     await prefs.setString(_prefsKey, jsonEncode(raw));
     return averages();
   }
+}
+
+/// Text used by the home-screen widget: e.g. "9.1|7.8|1.3".
+String formatAverages(ChallengeAverages averages) {
+  return [
+    for (final difficulty in ChallengeDifficulty.values)
+      averages.averageFor(difficulty)?.toStringAsFixed(1) ?? '--',
+  ].join('|');
 }
 
 final challengeAveragesProvider = FutureProvider<ChallengeAverages>(
