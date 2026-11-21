@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/challenge/challenge_screen.dart';
 import '../features/grammar/grammar_screen.dart';
+import '../features/learn/learn_screen.dart';
 import '../features/music/music_screen.dart';
+import '../features/practice/practice_screen.dart';
 import '../features/reading/reading_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/video/video_screen.dart';
@@ -12,7 +15,7 @@ import '../features/vocab/vocab_screen.dart';
 final currentTabIndexProvider = StateProvider<int>((ref) => 0);
 
 final GoRouter appRouter = GoRouter(
-  initialLocation: '/video',
+  initialLocation: '/practice',
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
@@ -21,40 +24,48 @@ final GoRouter appRouter = GoRouter(
         StatefulShellBranch(
           routes: [
             GoRoute(
-              path: '/video',
-              builder: (context, state) => const VideoScreen(),
+              path: '/practice',
+              builder: (context, state) => const PracticeScreen(),
+              routes: [
+                GoRoute(
+                  path: 'video',
+                  builder: (context, state) => const VideoScreen(),
+                ),
+                GoRoute(
+                  path: 'music',
+                  builder: (context, state) => const MusicScreen(),
+                ),
+                GoRoute(
+                  path: 'reading',
+                  builder: (context, state) => const ReadingScreen(),
+                ),
+              ],
             ),
           ],
         ),
         StatefulShellBranch(
           routes: [
             GoRoute(
-              path: '/vocab',
-              builder: (context, state) => const VocabScreen(),
+              path: '/learn',
+              builder: (context, state) => const LearnScreen(),
+              routes: [
+                GoRoute(
+                  path: 'vocab',
+                  builder: (context, state) => const VocabScreen(),
+                ),
+                GoRoute(
+                  path: 'grammar',
+                  builder: (context, state) => const GrammarScreen(),
+                ),
+              ],
             ),
           ],
         ),
         StatefulShellBranch(
           routes: [
             GoRoute(
-              path: '/grammar',
-              builder: (context, state) => const GrammarScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/reading',
-              builder: (context, state) => const ReadingScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: '/music',
-              builder: (context, state) => const MusicScreen(),
+              path: '/challenge',
+              builder: (context, state) => const ChallengeScreen(),
             ),
           ],
         ),
@@ -91,29 +102,19 @@ class AppShell extends ConsumerWidget {
         },
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.smart_display_outlined),
-            selectedIcon: Icon(Icons.smart_display),
-            label: '视频',
+            icon: Icon(Icons.explore_outlined),
+            selectedIcon: Icon(Icons.explore),
+            label: '实战',
           ),
           NavigationDestination(
-            icon: Icon(Icons.style_outlined),
-            selectedIcon: Icon(Icons.style),
-            label: '词汇',
+            icon: Icon(Icons.school_outlined),
+            selectedIcon: Icon(Icons.school),
+            label: '学习',
           ),
           NavigationDestination(
-            icon: Icon(Icons.menu_book_outlined),
-            selectedIcon: Icon(Icons.menu_book),
-            label: '语法',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.auto_stories_outlined),
-            selectedIcon: Icon(Icons.auto_stories),
-            label: '阅读',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.music_note_outlined),
-            selectedIcon: Icon(Icons.music_note),
-            label: '音乐',
+            icon: Icon(Icons.emoji_events_outlined),
+            selectedIcon: Icon(Icons.emoji_events),
+            label: '挑战',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),

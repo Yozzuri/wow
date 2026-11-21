@@ -50,13 +50,18 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
   final ValueNotifier<int> _position = ValueNotifier<int>(0);
   final ValueNotifier<int> _duration = ValueNotifier<int>(0);
 
-  static const int _musicTabIndex = 4;
+  static const int _practiceTabIndex = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _visible = ref.read(currentTabIndexProvider) == _musicTabIndex;
+    _visible = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _updateVisibility(force: true);
+      }
+    });
     _foreground =
         WidgetsBinding.instance.lifecycleState == null ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
@@ -377,20 +382,34 @@ class _MusicScreenState extends ConsumerState<MusicScreen>
     );
   }
 
+  bool _isVisible() {
+    if (ref.read(currentTabIndexProvider) != _practiceTabIndex) {
+      return false;
+    }
+    final location = ModalRoute.of(context)?.settings.name ?? '';
+    return location.endsWith('/music');
+  }
+
+  void _updateVisibility({bool force = false}) {
+    final visible = _isVisible();
+    if (!force && visible == _visible) {
+      return;
+    }
+    _visible = visible;
+    if (visible) {
+      _startSync();
+      if (mounted) {
+        setState(() {});
+      }
+    } else {
+      _stopSync();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     ref.listen<int>(currentTabIndexProvider, (previous, next) {
-      final visible = next == _musicTabIndex;
-      if (visible == _visible) {
-        return;
-      }
-      _visible = visible;
-      if (visible) {
-        _startSync();
-        setState(() {});
-      } else {
-        _stopSync();
-      }
+      _updateVisibility();
     });
     return Scaffold(
       appBar: AppBar(
