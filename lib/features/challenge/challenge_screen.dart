@@ -3,10 +3,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/challenge/achievements.dart';
 import '../../core/challenge/challenge_store.dart';
 import '../../core/challenge/rank_store.dart';
 import '../../core/language/languages.dart';
 import '../../core/vocab/vocab_store.dart';
+import 'achievements_page.dart';
 import 'challenge_session_page.dart';
 
 class ChallengeScreen extends ConsumerStatefulWidget {
@@ -110,7 +112,24 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
     final averages = ref.watch(challengeAveragesProvider);
     final rank = ref.watch(rankProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('挑战')),
+      appBar: AppBar(
+        title: const Text('挑战'),
+        actions: [
+          IconButton(
+            tooltip: '成就',
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (context) => const AchievementsPage(),
+                ),
+              );
+              ref.invalidate(achievementProgressProvider);
+              ref.invalidate(pinnedAchievementsProvider);
+            },
+            icon: const Icon(Icons.emoji_events_outlined),
+          ),
+        ],
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
@@ -232,6 +251,16 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
                     selected: _difficulty == difficulty,
                     average: averages.valueOrNull?.averageFor(difficulty),
                     onTap: () => setState(() => _difficulty = difficulty),
+                  ),
+                if (_difficulty == ChallengeDifficulty.extreme)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 2),
+                    child: Text(
+                      '极限难度对高分段压缩赋分，9.0 以上更难，9.5 极难',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.tertiary,
+                      ),
+                    ),
                   ),
                 const SizedBox(height: 4),
                 CheckboxListTile(

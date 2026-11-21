@@ -27,6 +27,7 @@ class ChallengeWidgetProvider : AppWidgetProvider() {
         private const val KEY_AVERAGES = "challenge_averages"
         private const val KEY_RANK = "challenge_rank"
         private const val KEY_SEASON = "challenge_season"
+        private const val KEY_ACHIEVEMENTS = "challenge_achievements"
 
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -36,12 +37,14 @@ class ChallengeWidgetProvider : AppWidgetProvider() {
             averages: String,
             rank: String,
             season: String,
+            achievements: String,
         ) {
             prefs(context)
                 .edit()
                 .putString(KEY_AVERAGES, averages)
                 .putString(KEY_RANK, rank)
                 .putString(KEY_SEASON, season)
+                .putString(KEY_ACHIEVEMENTS, achievements)
                 .apply()
         }
 
@@ -72,6 +75,10 @@ class ChallengeWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(
                 R.id.challenge_season,
                 p.getString(KEY_SEASON, "") ?: "",
+            )
+            views.setTextViewText(
+                R.id.challenge_achievements,
+                p.getString(KEY_ACHIEVEMENTS, "") ?: "",
             )
             val intent = Intent(context, MainActivity::class.java)
             val pending = PendingIntent.getActivity(

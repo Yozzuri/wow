@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../challenge/achievements.dart';
+
 class CheckinStatus {
   const CheckinStatus({this.streak = 0, this.checkedInToday = false});
 
@@ -92,9 +94,11 @@ class CheckinStore {
 
   Future<void> _syncWidget(Set<String> dates, int streak) async {
     try {
+      final achievements = await const AchievementStore().widgetLine();
       await _channel.invokeMethod<void>('updateCheckin', {
         'dates': dates.toList()..sort(),
         'streak': streak,
+        'achievements': achievements,
       });
     } on MissingPluginException {
       // Not running on Android or the widget bridge is unavailable.

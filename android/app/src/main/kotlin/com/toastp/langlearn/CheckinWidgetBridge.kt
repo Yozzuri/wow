@@ -20,7 +20,13 @@ class CheckinWidgetBridge(
             "updateCheckin" -> {
                 val dates = call.argument<List<String>>("dates") ?: emptyList()
                 val streak = call.argument<Int>("streak") ?: 0
-                CheckinWidgetProvider.saveState(context, dates, streak)
+                val achievements = call.argument<String>("achievements") ?: ""
+                CheckinWidgetProvider.saveState(
+                    context,
+                    dates,
+                    streak,
+                    achievements,
+                )
                 CheckinWidgetProvider.updateAll(context)
                 result.success(null)
             }
@@ -28,11 +34,13 @@ class CheckinWidgetBridge(
                 val averages = call.argument<String>("averages") ?: "--|--|--"
                 val rank = call.argument<String>("rank") ?: ""
                 val season = call.argument<String>("season") ?: ""
+                val achievements = call.argument<String>("achievements") ?: ""
                 ChallengeWidgetProvider.saveState(
                     context,
                     averages,
                     rank,
                     season,
+                    achievements,
                 )
                 ChallengeWidgetProvider.updateAll(context)
                 result.success(null)

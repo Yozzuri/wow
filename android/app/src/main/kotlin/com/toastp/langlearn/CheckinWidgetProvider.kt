@@ -34,15 +34,22 @@ class CheckinWidgetProvider : AppWidgetProvider() {
         private const val PREFS = "langlearn_widget"
         private const val KEY_DATES = "checkin_dates"
         private const val KEY_STREAK = "checkin_streak"
+        private const val KEY_ACHIEVEMENTS = "checkin_achievements"
 
         private fun prefs(context: Context) =
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-        fun saveState(context: Context, dates: List<String>, streak: Int) {
+        fun saveState(
+            context: Context,
+            dates: List<String>,
+            streak: Int,
+            achievements: String,
+        ) {
             prefs(context)
                 .edit()
                 .putString(KEY_DATES, dates.joinToString(","))
                 .putInt(KEY_STREAK, streak)
+                .putString(KEY_ACHIEVEMENTS, achievements)
                 .apply()
         }
 
@@ -81,6 +88,10 @@ class CheckinWidgetProvider : AppWidgetProvider() {
             views.setTextViewText(
                 R.id.widget_status,
                 if (checkedToday) "今日已打卡" else "今日待打卡",
+            )
+            views.setTextViewText(
+                R.id.widget_achievements,
+                prefs(context).getString(KEY_ACHIEVEMENTS, "") ?: "",
             )
             val intent = Intent(context, MainActivity::class.java)
             val pending = PendingIntent.getActivity(

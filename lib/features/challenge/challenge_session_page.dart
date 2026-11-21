@@ -3,10 +3,12 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/challenge/achievements.dart';
 import '../../core/challenge/challenge_store.dart';
 import '../../core/challenge/challenge_widget_sync.dart';
 import '../../core/challenge/rank_store.dart';
 import '../../core/text/japanese_kana.dart';
+import '../../core/vocab/checkin_store.dart';
 import '../../core/text/normalize.dart';
 import '../../core/vocab/vocab_store.dart';
 
@@ -185,7 +187,10 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     final rate = total == 0 ? 0.0 : _correct / total;
     final speed = _correct == 0 ? 0.0 : _speedSum / _correct;
     final raw = 10 * (0.7 * rate + 0.3 * speed);
-    final score = double.parse(raw.clamp(0.0, 10.0).toStringAsFixed(1));
+    final score = settleScore(
+      _difficulty,
+      double.parse(raw.clamp(0.0, 10.0).toStringAsFixed(1)),
+    );
     setState(() {
       _finished = true;
       _score = score;
@@ -205,7 +210,13 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
       );
       rankState = await const RankStore().applyPoints(breakdown.finalPoints);
     }
+    await const AchievementStore().recordChallenge(
+      difficulty: _difficulty,
+      score: score,
+      ranked: widget.ranked && _difficulty.affectsRank,
+    );
     await ChallengeWidgetSync.sync();
+    await const CheckinStore().syncWidget();
     if (!mounted) {
       return;
     }

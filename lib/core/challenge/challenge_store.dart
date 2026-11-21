@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -155,6 +156,20 @@ class ChallengeStore {
     await prefs.setString(_prefsKey, jsonEncode(raw));
     return averages();
   }
+}
+
+/// Extreme runs are compressed at the top end: scores below 8.0 stay as they
+/// are, 9.0 becomes roughly 8.9, and 9.5 is only reachable with an almost
+/// perfect run.
+double settleScore(ChallengeDifficulty difficulty, double raw) {
+  if (difficulty != ChallengeDifficulty.extreme) {
+    return raw;
+  }
+  if (raw <= 8.0) {
+    return raw;
+  }
+  final adjusted = 8.0 + 4.0 * (1 - exp(-(raw - 8.0) / 4.0));
+  return double.parse(adjusted.clamp(0.0, 9.9).toStringAsFixed(1));
 }
 
 /// Text used by the home-screen widget: e.g. "9.1|7.8|1.3".

@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import 'achievements.dart';
 import 'challenge_store.dart';
 import 'rank_store.dart';
 
@@ -13,7 +14,9 @@ class ChallengeWidgetSync {
     try {
       final averages = await const ChallengeStore().averages();
       final rank = await const RankStore().load();
+      final achievements = await const AchievementStore().widgetLine();
       await _channel.invokeMethod<void>('updateChallenge', {
+        'achievements': achievements,
         'averages': formatAverages(averages),
         'rank': rank.displayText,
         'season': '第${rank.season}赛季 · 剩${rank.seasonDaysLeft.clamp(0, rankSeasonDays)}天',
