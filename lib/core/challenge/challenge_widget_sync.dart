@@ -16,7 +16,7 @@ class ChallengeWidgetSync {
       await _channel.invokeMethod<void>('updateChallenge', {
         'averages': formatAverages(averages),
         'rank': rank.displayText,
-        'season': '第 ${rank.season} 赛季 · 剩余 ${rank.seasonDaysLeft.clamp(0, rankSeasonDays)} 天',
+        'season': '第${rank.season}赛季 · 剩${rank.seasonDaysLeft.clamp(0, rankSeasonDays)}天',
       });
     } on MissingPluginException {
       // Not running on Android.
