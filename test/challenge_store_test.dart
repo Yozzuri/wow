@@ -38,12 +38,45 @@ void main() {
     expect(difficulty.secondsFor(100), difficulty.minSeconds);
   });
 
-  test('training never touches rank points', () {
-    expect(rankDeltaFor(ChallengeDifficulty.training, 10), 0);
-    expect(rankDeltaFor(ChallengeDifficulty.training, 1), 0);
-    expect(rankDeltaFor(ChallengeDifficulty.regular, 10), 80);
-    expect(rankDeltaFor(ChallengeDifficulty.extreme, 10), 120);
-    expect(rankDeltaFor(ChallengeDifficulty.regular, 5), -20);
+  test('rank points apply language then difficulty multipliers', () {
+    final training = rankPointsFor(
+      difficulty: ChallengeDifficulty.training,
+      score: 10,
+      specificLanguage: false,
+    );
+    expect(training.finalPoints, 0);
+
+    final regular = rankPointsFor(
+      difficulty: ChallengeDifficulty.regular,
+      score: 10,
+      specificLanguage: false,
+    );
+    expect(regular.base, 80);
+    expect(regular.finalPoints, 80);
+
+    final extreme = rankPointsFor(
+      difficulty: ChallengeDifficulty.extreme,
+      score: 10,
+      specificLanguage: false,
+    );
+    expect(extreme.finalPoints, 120);
+
+    final singleLanguage = rankPointsFor(
+      difficulty: ChallengeDifficulty.regular,
+      score: 10,
+      specificLanguage: true,
+    );
+    expect(singleLanguage.languageMultiplier, 0.9);
+    expect(singleLanguage.afterLanguage, 72);
+    expect(singleLanguage.finalPoints, 72);
+
+    final lowScore = rankPointsFor(
+      difficulty: ChallengeDifficulty.regular,
+      score: 5,
+      specificLanguage: false,
+    );
+    expect(lowScore.base, -20);
+    expect(lowScore.finalPoints, -20);
   });
 
   test('advanceRank promotes through divisions and tiers', () {

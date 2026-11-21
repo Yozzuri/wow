@@ -17,12 +17,14 @@ class ChallengeSessionPage extends ConsumerStatefulWidget {
     required this.difficulty,
     required this.count,
     this.ranked = false,
+    this.specificLanguage = false,
   });
 
   final List<VocabEntry> entries;
   final ChallengeDifficulty difficulty;
   final int count;
   final bool ranked;
+  final bool specificLanguage;
 
   @override
   ConsumerState<ChallengeSessionPage> createState() =>
@@ -45,7 +47,7 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
   double _score = 0;
   ChallengeAverages? _averages;
   RankState? _rankState;
-  int _rankDelta = 0;
+  RankPointsBreakdown? _breakdown;
 
   ChallengeDifficulty get _difficulty => widget.difficulty;
 
@@ -191,10 +193,14 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     _timer.stop();
     final averages = await const ChallengeStore().record(_difficulty, score);
     RankState? rankState;
-    var rankDelta = 0;
+    RankPointsBreakdown? breakdown;
     if (widget.ranked && _difficulty.affectsRank) {
-      rankDelta = rankDeltaFor(_difficulty, score);
-      rankState = await const RankStore().applyResult(_difficulty, score);
+      breakdown = rankPointsFor(
+        difficulty: _difficulty,
+        score: score,
+        specificLanguage: widget.specificLanguage,
+      );
+      rankState = await const RankStore().applyPoints(breakdown.finalPoints);
     }
     await ChallengeWidgetSync.sync();
     if (!mounted) {
@@ -203,7 +209,7 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     setState(() {
       _averages = averages;
       _rankState = rankState;
-      _rankDelta = rankDelta;
+      _breakdown = breakdown;
     });
   }
 
@@ -218,7 +224,7 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
         total: _words.length,
         averages: _averages,
         rankState: _rankState,
-        rankDelta: _rankDelta,
+        breakdown: _breakdown,
         ranked: widget.ranked,
         onRetry: () {
           Navigator.of(context).pushReplacement(
@@ -228,6 +234,7 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
                 difficulty: _difficulty,
                 count: widget.count,
                 ranked: widget.ranked,
+                specificLanguage: widget.specificLanguage,
               ),
             ),
           );
@@ -355,7 +362,7 @@ class _ResultView extends StatelessWidget {
     required this.total,
     required this.averages,
     required this.rankState,
-    required this.rankDelta,
+    required this.breakdown,
     required this.ranked,
     required this.onRetry,
   });
@@ -366,7 +373,7 @@ class _ResultView extends StatelessWidget {
   final int total;
   final ChallengeAverages? averages;
   final RankState? rankState;
-  final int rankDelta;
+  final RankPointsBreakdown? breakdown;
   final bool ranked;
   final VoidCallback onRetry;
 
@@ -419,38 +426,17 @@ class _ResultView extends StatelessWidget {
                     const SizedBox(height: 6),
                     if (!difficulty.affectsRank)
                       Text(
-                        '训练难度不计入排位，本次段位没有变化。',
+                        '训练模式将不结算排位积分',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
                       )
-                    else ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              rankState?.displayText ?? '--',
-                              style: theme.textTheme.titleMedium,
-                            ),
-                          ),
-                          Text(
-                            rankDelta >= 0
-                                ? '+$rankDelta'
-                                : '$rankDelta',
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              color: rankDelta >= 0
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.error,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
+                    else if (breakdown != null) ...[
+                      _RankPointsFlow(breakdown: breakdown!),
+                      const SizedBox(height: 8),
                       Text(
-                        '排位积分',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                        rankState?.displayText ?? '--',
+                        style: theme.textTheme.titleMedium,
                       ),
                     ],
                   ],
@@ -506,6 +492,95 @@ class _ResultView extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _RankPointsFlow extends StatefulWidget {
+  const _RankPointsFlow({required this.breakdown});
+
+  final RankPointsBreakdown breakdown;
+
+  @override
+  State<_RankPointsFlow> createState() => _RankPointsFlowState();
+}
+
+class _RankPointsFlowState extends State<_RankPointsFlow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _value;
+  bool _stepsShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 450),
+    );
+    _value = Tween<double>(
+      begin: 0,
+      end: widget.breakdown.base.toDouble(),
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _controller.forward().whenComplete(() {
+      if (mounted) {
+        setState(() => _stepsShown = true);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  String _multiplier(double value) => '×${value.toStringAsFixed(1)}';
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final breakdown = widget.breakdown;
+    final muted = theme.textTheme.bodySmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AnimatedBuilder(
+          animation: _value,
+          builder: (context, _) => Text(
+            '${_value.value.round()}',
+            style: theme.textTheme.displaySmall?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: breakdown.finalPoints >= 0
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.error,
+            ),
+          ),
+        ),
+        Text('基础段位分', style: muted),
+        if (_stepsShown) ...[
+          const SizedBox(height: 6),
+          Text(
+            '语种倍率 ${_multiplier(breakdown.languageMultiplier)}→ ${breakdown.afterLanguage}',
+            style: muted,
+          ),
+          Text(
+            '难度加成 ${_multiplier(breakdown.difficultyMultiplier)}→ ${breakdown.finalPoints}',
+            style: muted,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '本次 ${breakdown.finalPoints >= 0 ? '+' : ''}${breakdown.finalPoints}',
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: breakdown.finalPoints >= 0
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.error,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

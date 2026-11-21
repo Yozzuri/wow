@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/challenge/challenge_store.dart';
 import '../../core/challenge/rank_store.dart';
+import '../../core/language/languages.dart';
 import '../../core/vocab/vocab_store.dart';
 import 'challenge_session_page.dart';
 
@@ -21,8 +22,14 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
   int _count = 10;
   ChallengeDifficulty _difficulty = ChallengeDifficulty.regular;
   bool _ranked = false;
+  String? _language;
   List<VocabEntry> _entries = const [];
+  List<String> _languages = const [];
   bool _loading = true;
+
+  List<VocabEntry> get _available => _language == null
+      ? _entries
+      : _entries.where((entry) => entry.language == _language).toList();
 
   @override
   void initState() {
@@ -38,8 +45,22 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
     if (!mounted) {
       return;
     }
+    final languages = <String>{for (final entry in usable) entry.language};
+    final ordered = readingLanguages
+        .map((language) => language.code)
+        .where((code) => languages.contains(code))
+        .toList();
+    for (final code in languages) {
+      if (!ordered.contains(code)) {
+        ordered.add(code);
+      }
+    }
     setState(() {
       _entries = usable;
+      _languages = ordered;
+      if (_language != null && !languages.contains(_language)) {
+        _language = null;
+      }
       _loading = false;
     });
   }
@@ -54,13 +75,14 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
     if (!mounted) {
       return;
     }
-    if (_entries.isEmpty) {
+    final pool = _available;
+    if (pool.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('生词本里还没有可拼写的单词')),
       );
       return;
     }
-    final count = min(_count, _entries.length);
+    final count = min(_count, pool.length);
     if (count < _count) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('可用单词只有 $count 个，本次按 $count 题开始')),
@@ -69,10 +91,11 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ChallengeSessionPage(
-          entries: _entries,
+          entries: pool,
           difficulty: _difficulty,
           count: count,
           ranked: _ranked,
+          specificLanguage: _language != null,
         ),
       ),
     );
@@ -93,12 +116,6 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               children: [
-                Text(
-                  '看读音和释义拼写单词。拼写正确立刻进入下一题，时间会逐题减少。',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
                 if (rank.valueOrNull != null) ...[
                   const SizedBox(height: 16),
                   Card(
@@ -167,13 +184,45 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _entries.isEmpty
+                  _available.isEmpty
                       ? '生词本暂无可用单词'
-                      : '当前可用 ${_entries.length} 个单词',
+                      : '当前可用 ${_available.length} 个单词',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (_languages.isNotEmpty) ...[
+                  const SizedBox(height: 18),
+                  Text('语种', style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('全语种'),
+                        selected: _language == null,
+                        onSelected: (_) => setState(() => _language = null),
+                      ),
+                      for (final code in _languages)
+                        ChoiceChip(
+                          label: Text(readingLanguageFor(code).label),
+                          selected: _language == code,
+                          onSelected: (_) => setState(() => _language = code),
+                        ),
+                    ],
+                  ),
+                  if (_language != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '指定语种挑战，排位积分 ×0.9',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.tertiary,
+                        ),
+                      ),
+                    ),
+                ],
                 const SizedBox(height: 20),
                 Text('难度', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
@@ -193,8 +242,8 @@ class _ChallengeScreenState extends ConsumerState<ChallengeScreen> {
                   title: const Text('开启排位'),
                   subtitle: Text(
                     _difficulty.affectsRank
-                        ? '本次成绩会加减排位积分'
-                        : '训练难度可以开启，但不加也不扣排位积分',
+                        ? '将在结束后结算排位积分'
+                        : '训练模式将不结算排位积分',
                   ),
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
@@ -299,7 +348,7 @@ class _DifficultyCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      difficulty.description,
+                      '每题 ≤ ${difficulty.startSeconds.round()} 秒',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant,
                       ),

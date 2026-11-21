@@ -123,16 +123,54 @@ class RankState {
       );
 }
 
-/// Rank points earned by one challenge run. Training returns 0.
-int rankDeltaFor(ChallengeDifficulty difficulty, double score) {
+class RankPointsBreakdown {
+  const RankPointsBreakdown({
+    required this.base,
+    required this.languageMultiplier,
+    required this.afterLanguage,
+    required this.difficultyMultiplier,
+    required this.finalPoints,
+  });
+
+  static const zero = RankPointsBreakdown(
+    base: 0,
+    languageMultiplier: 1,
+    afterLanguage: 0,
+    difficultyMultiplier: 1,
+    finalPoints: 0,
+  );
+
+  final int base;
+  final double languageMultiplier;
+  final int afterLanguage;
+  final double difficultyMultiplier;
+  final int finalPoints;
+}
+
+/// Base points come from the composite score, then the language multiplier
+/// (0.9 for a single selected language), then the difficulty bonus.
+RankPointsBreakdown rankPointsFor({
+  required ChallengeDifficulty difficulty,
+  required double score,
+  required bool specificLanguage,
+}) {
   if (!difficulty.affectsRank) {
-    return 0;
+    return RankPointsBreakdown.zero;
   }
-  final base = ((score - 6.0) * 20).round();
-  final scaled = difficulty == ChallengeDifficulty.extreme
-      ? (base * 1.5).round()
-      : base;
-  return scaled.clamp(-150, 150);
+  final base = ((score - 6.0) * 20).round().clamp(-150, 150);
+  final languageMultiplier = specificLanguage ? 0.9 : 1.0;
+  final afterLanguage = (base * languageMultiplier).round();
+  final difficultyMultiplier = difficulty == ChallengeDifficulty.extreme
+      ? 1.5
+      : 1.0;
+  final finalPoints = (afterLanguage * difficultyMultiplier).round();
+  return RankPointsBreakdown(
+    base: base,
+    languageMultiplier: languageMultiplier,
+    afterLanguage: afterLanguage,
+    difficultyMultiplier: difficultyMultiplier,
+    finalPoints: finalPoints,
+  );
 }
 
 RankState advanceRank(RankState state, int delta) {
@@ -230,16 +268,12 @@ class RankStore {
     return rolled;
   }
 
-  Future<RankState> applyResult(
-    ChallengeDifficulty difficulty,
-    double score,
-  ) async {
+  Future<RankState> applyPoints(int points) async {
     final state = await load();
-    final delta = rankDeltaFor(difficulty, score);
-    if (delta == 0) {
+    if (points == 0) {
       return state;
     }
-    final next = advanceRank(state, delta);
+    final next = advanceRank(state, points);
     await _save(next);
     return next;
   }
