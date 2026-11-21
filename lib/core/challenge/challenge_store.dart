@@ -158,9 +158,12 @@ class ChallengeStore {
   }
 }
 
-/// Extreme runs are compressed at the top end: scores below 8.0 stay as they
-/// are, 9.0 becomes roughly 8.9, and 9.5 is only reachable with an almost
-/// perfect run.
+/// Extreme runs are compressed at the top end while still allowing 10.0.
+///
+/// Below 8.0 nothing changes. Above 8.0 the curve is
+/// 8 + 2 * ((raw - 8) / 2)^1.8, so 9.0 needs roughly 9.36, 9.5 needs about
+/// 9.70, and only a perfect raw 10.0 reaches 10.0. Raising the displayed
+/// score therefore gets disproportionately harder near the top.
 double settleScore(ChallengeDifficulty difficulty, double raw) {
   if (difficulty != ChallengeDifficulty.extreme) {
     return raw;
@@ -168,8 +171,9 @@ double settleScore(ChallengeDifficulty difficulty, double raw) {
   if (raw <= 8.0) {
     return raw;
   }
-  final adjusted = 8.0 + 4.0 * (1 - exp(-(raw - 8.0) / 4.0));
-  return double.parse(adjusted.clamp(0.0, 9.9).toStringAsFixed(1));
+  final t = ((raw - 8.0) / 2.0).clamp(0.0, 1.0);
+  final adjusted = 8.0 + 2.0 * pow(t, 1.8);
+  return double.parse(adjusted.clamp(0.0, 10.0).toStringAsFixed(1));
 }
 
 /// Text used by the home-screen widget: e.g. "9.1|7.8|1.3".

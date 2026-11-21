@@ -15,7 +15,8 @@ void main() {
     expect(settleScore(ChallengeDifficulty.extreme, 8.0), 8.0);
     expect(settleScore(ChallengeDifficulty.extreme, 9.0), lessThan(9.0));
     expect(settleScore(ChallengeDifficulty.extreme, 9.5), lessThan(9.5));
-    expect(settleScore(ChallengeDifficulty.extreme, 10.0), greaterThan(9.5));
+    expect(settleScore(ChallengeDifficulty.extreme, 9.5), greaterThan(9.0));
+    expect(settleScore(ChallengeDifficulty.extreme, 10.0), 10.0);
   });
 
   test('challenge runs update achievement progress', () async {
