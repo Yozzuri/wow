@@ -195,10 +195,13 @@ class _ChallengeSessionPageState extends ConsumerState<ChallengeSessionPage>
     RankState? rankState;
     RankPointsBreakdown? breakdown;
     if (widget.ranked && _difficulty.affectsRank) {
+      final before = await const RankStore().load();
       breakdown = rankPointsFor(
         difficulty: _difficulty,
         score: score,
+        wordCount: _words.length,
         specificLanguage: widget.specificLanguage,
+        tier: before.tier,
       );
       rankState = await const RankStore().applyPoints(breakdown.finalPoints);
     }
@@ -559,9 +562,16 @@ class _RankPointsFlowState extends State<_RankPointsFlow>
             ),
           ),
         ),
-        Text('基础段位分', style: muted),
+        Text(
+          '基础段位分 · 达标分 ${breakdown.threshold.toStringAsFixed(1)}',
+          style: muted,
+        ),
         if (_stepsShown) ...[
           const SizedBox(height: 6),
+          Text(
+            '词数倍率 ${_multiplier(breakdown.wordMultiplier)}→ ${breakdown.afterWords}',
+            style: muted,
+          ),
           Text(
             '语种倍率 ${_multiplier(breakdown.languageMultiplier)}→ ${breakdown.afterLanguage}',
             style: muted,
@@ -570,9 +580,16 @@ class _RankPointsFlowState extends State<_RankPointsFlow>
             '难度加成 ${_multiplier(breakdown.difficultyMultiplier)}→ ${breakdown.finalPoints}',
             style: muted,
           ),
+          if (breakdown.protectedLoss)
+            Text(
+              '掉落不足 20 分，触发保护',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.tertiary,
+              ),
+            ),
           const SizedBox(height: 4),
           Text(
-            '本次 ${breakdown.finalPoints >= 0 ? '+' : ''}${breakdown.finalPoints}',
+            '本次 ${breakdown.finalPoints > 0 ? '+' : ''}${breakdown.finalPoints}',
             style: theme.textTheme.titleSmall?.copyWith(
               color: breakdown.finalPoints >= 0
                   ? theme.colorScheme.primary

@@ -38,45 +38,83 @@ void main() {
     expect(difficulty.secondsFor(100), difficulty.minSeconds);
   });
 
-  test('rank points apply language then difficulty multipliers', () {
+  test('thresholds grow linearly from 5.0 to 9.0', () {
+    expect(rankPromotionThreshold(0), 5.0);
+    expect(rankPromotionThreshold(4), 7.0);
+    expect(rankPromotionThreshold(8), 9.0);
+  });
+
+  test('word multipliers are non-linear', () {
+    expect(rankWordMultiplier(10), 1.0);
+    expect(rankWordMultiplier(20), 2.5);
+    expect(rankWordMultiplier(30), 4.5);
+    expect(rankWordMultiplier(50), 8.5);
+  });
+
+  test('rank points compare score with tier threshold', () {
     final training = rankPointsFor(
       difficulty: ChallengeDifficulty.training,
       score: 10,
+      wordCount: 10,
       specificLanguage: false,
+      tier: 0,
     );
     expect(training.finalPoints, 0);
 
-    final regular = rankPointsFor(
+    final bronze = rankPointsFor(
       difficulty: ChallengeDifficulty.regular,
       score: 10,
+      wordCount: 10,
       specificLanguage: false,
+      tier: 0,
     );
-    expect(regular.base, 80);
-    expect(regular.finalPoints, 80);
+    expect(bronze.base, 100);
+    expect(bronze.finalPoints, 100);
 
-    final extreme = rankPointsFor(
+    final peak = rankPointsFor(
+      difficulty: ChallengeDifficulty.regular,
+      score: 10,
+      wordCount: 10,
+      specificLanguage: false,
+      tier: 8,
+    );
+    expect(peak.base, 20);
+    expect(peak.finalPoints, 20);
+
+    final longRun = rankPointsFor(
       difficulty: ChallengeDifficulty.extreme,
       score: 10,
-      specificLanguage: false,
-    );
-    expect(extreme.finalPoints, 120);
-
-    final singleLanguage = rankPointsFor(
-      difficulty: ChallengeDifficulty.regular,
-      score: 10,
+      wordCount: 20,
       specificLanguage: true,
+      tier: 0,
     );
-    expect(singleLanguage.languageMultiplier, 0.9);
-    expect(singleLanguage.afterLanguage, 72);
-    expect(singleLanguage.finalPoints, 72);
+    expect(longRun.afterWords, 250);
+    expect(longRun.afterLanguage, 225);
+    expect(longRun.finalPoints, 300);
+  });
 
-    final lowScore = rankPointsFor(
+  test('small losses are protected, larger losses are not', () {
+    final protected = rankPointsFor(
       difficulty: ChallengeDifficulty.regular,
-      score: 5,
+      score: 8.9,
+      wordCount: 10,
       specificLanguage: false,
+      tier: 8,
     );
-    expect(lowScore.base, -20);
-    expect(lowScore.finalPoints, -20);
+    expect(protected.base, -2);
+    expect(protected.protectedLoss, isTrue);
+    expect(protected.finalPoints, 0);
+
+    final loss = rankPointsFor(
+      difficulty: ChallengeDifficulty.regular,
+      score: 6.0,
+      wordCount: 10,
+      specificLanguage: false,
+      tier: 5,
+    );
+    expect(loss.base, -30);
+    expect(loss.protectedLoss, isFalse);
+    expect(loss.finalPoints, -30);
   });
 
   test('advanceRank promotes through divisions and tiers', () {

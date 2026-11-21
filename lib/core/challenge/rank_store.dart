@@ -125,51 +125,102 @@ class RankState {
 
 class RankPointsBreakdown {
   const RankPointsBreakdown({
+    required this.threshold,
     required this.base,
+    required this.wordMultiplier,
+    required this.afterWords,
     required this.languageMultiplier,
     required this.afterLanguage,
     required this.difficultyMultiplier,
     required this.finalPoints,
+    this.protectedLoss = false,
   });
 
   static const zero = RankPointsBreakdown(
+    threshold: 5,
     base: 0,
+    wordMultiplier: 1,
+    afterWords: 0,
     languageMultiplier: 1,
     afterLanguage: 0,
     difficultyMultiplier: 1,
     finalPoints: 0,
   );
 
+  /// Composite score required to gain points at this tier.
+  final double threshold;
   final int base;
+  final double wordMultiplier;
+  final int afterWords;
   final double languageMultiplier;
   final int afterLanguage;
   final double difficultyMultiplier;
   final int finalPoints;
+
+  /// Set when a small loss was cancelled by the rank protection.
+  final bool protectedLoss;
 }
 
-/// Base points come from the composite score, then the language multiplier
-/// (0.9 for a single selected language), then the difficulty bonus.
+/// Required composite score grows linearly from 5.0 (青铜) to 9.0 (巅峰).
+double rankPromotionThreshold(int tier) {
+  final index = tier.clamp(0, rankTierNames.length - 1);
+  return 5.0 + 0.5 * index;
+}
+
+/// Word count multiplier. 10 words = 1.0x, 20 = 2.5x, then steeper.
+double rankWordMultiplier(int wordCount) {
+  if (wordCount >= 50) {
+    return 8.5;
+  }
+  if (wordCount >= 30) {
+    return 4.5;
+  }
+  if (wordCount >= 20) {
+    return 2.5;
+  }
+  return 1.0;
+}
+
+/// Base points compare the composite score with the tier threshold, then get
+/// scaled by word count, selected language and difficulty. A loss smaller than
+/// 20 points is cancelled by the rank protection.
 RankPointsBreakdown rankPointsFor({
   required ChallengeDifficulty difficulty,
   required double score,
+  required int wordCount,
   required bool specificLanguage,
+  required int tier,
 }) {
   if (!difficulty.affectsRank) {
     return RankPointsBreakdown.zero;
   }
-  final base = ((score - 6.0) * 20).round().clamp(-150, 150);
+  final threshold = rankPromotionThreshold(tier);
+  final base = ((score - threshold) * 20).round().clamp(-150, 150);
+  final wordMultiplier = rankWordMultiplier(wordCount);
+  final afterWords = (base * wordMultiplier).round();
   final languageMultiplier = specificLanguage ? 0.9 : 1.0;
-  final afterLanguage = (base * languageMultiplier).round();
+  final afterLanguage = (afterWords * languageMultiplier).round();
   final difficultyMultiplier = difficulty == ChallengeDifficulty.extreme
       ? 1.5
       : 1.0;
-  final finalPoints = (afterLanguage * difficultyMultiplier).round();
+  var finalPoints = (afterLanguage * difficultyMultiplier)
+      .round()
+      .clamp(-300, 300);
+  var protectedLoss = false;
+  if (finalPoints < 0 && finalPoints > -20) {
+    finalPoints = 0;
+    protectedLoss = true;
+  }
   return RankPointsBreakdown(
+    threshold: threshold,
     base: base,
+    wordMultiplier: wordMultiplier,
+    afterWords: afterWords,
     languageMultiplier: languageMultiplier,
     afterLanguage: afterLanguage,
     difficultyMultiplier: difficultyMultiplier,
     finalPoints: finalPoints,
+    protectedLoss: protectedLoss,
   );
 }
 
